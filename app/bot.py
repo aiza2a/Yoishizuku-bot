@@ -14,7 +14,7 @@ import config
 # ---- persona overrides (externalized) ----
 from pathlib import Path as _PersonaPath
 from memory_store import PersistentMemory
-from access_control import allow as allow_access, ensure_initialized as ensure_access_control
+from access_control import allow as allow_access, ensure_initialized as ensure_access_control, is_user_allowed
 from role_dialogue_store import RoleDialogueStore
 import os as _persona_os
 
@@ -142,7 +142,7 @@ from utils.scripts import GetMesageInfo, safe_get, is_emoji, _matched_nick_prefi
 
 from telegram.constants import ChatAction
 from telegram import BotCommand, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto, InlineKeyboardButton
-from telegram.ext import CommandHandler, MessageHandler, ApplicationBuilder, filters, CallbackQueryHandler, Application, InlineQueryHandler, ContextTypes
+from telegram.ext import CommandHandler, MessageHandler, ApplicationBuilder, filters, CallbackQueryHandler, Application, InlineQueryHandler, ContextTypes, TypeHandler
 from datetime import timedelta
 
 import asyncio
@@ -1587,6 +1587,133 @@ async def inlinequery(update: Update, context) -> None:
 
         await update.inline_query.answer(results)
 
+async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 Bot API 10.0 的 Update.guest_message。
+
+    PTB 22.5 尚未为 guest_message 建模，原始数据位于 update.api_kwargs。
+    Guest 只能通过 answerGuestQuery 创建一条消息；之后以 inline_message_id 编辑该消息。
+    """
+    raw_guest = getattr(update, "api_kwargs", {}).get("guest_message")
+    if not isinstance(raw_guest, dict):
+        return
+
+    guest_query_id = str(raw_guest.get("guest_query_id") or "")
+    text = str(raw_guest.get("text") or raw_guest.get("caption") or "").strip()
+    caller = raw_guest.get("guest_bot_caller_user") or raw_guest.get("from") or {}
+    caller_id = str(caller.get("id") or "")
+    caller_name = str(caller.get("first_name") or caller.get("username") or "Guest")
+    chat = raw_guest.get("chat") or {}
+    chatid = chat.get("id")
+    if not guest_query_id or not text:
+        logger.warning("Guest 更新缺少 query_id 或文本；keys=%s", list(raw_guest))
+        return
+
+    # Guest 不属于普通 chat/message 更新；按调用者隔离上下文。
+    # 访问控制沿用私聊规则：动态 allow、环境白名单和管理员均可进入。
+    dynamic_user_allowed = is_user_allowed(caller_id)
+    static_user_allowed = bool(config.whitelist and caller_id in config.whitelist)
+    is_admin = bool(config.ADMIN_LIST and caller_id in config.ADMIN_LIST)
+    access_enabled = bool(config.whitelist or dynamic_user_allowed)
+    if access_enabled and not (is_admin or dynamic_user_allowed or static_user_allowed):
+        await context.bot._post("answerGuestQuery", data={
+            "guest_query_id": guest_query_id,
+            "result": {
+                "type": "article", "id": guest_query_id[:64], "title": "访问受限",
+                "input_message_content": {"message_text": "你暂时没有使用宵雫的权限。"},
+            },
+        })
+        return
+
+    bot_info = await context.bot.get_me()
+    username = bot_info.username or ""
+    mention = "@" + username.lower()
+    if text.lower().startswith(mention):
+        text = text[len(mention):].lstrip(" ,，:：\n")
+    if not text:
+        text = "你好。"
+
+    # Guest 按调用者隔离会话；没有持久聊天归属时避免继承群组设置。
+    # 读取全局默认配置，再让用户自己的动态配置正常覆盖。
+    guest_convo_id = "guest:" + caller_id
+    engine = Users.get_config(None, "engine")
+    api_key = Users.get_config(None, "api_key")
+    api_url = Users.get_config(None, "api_url")
+    language = Users.get_config(None, "language")
+    system_prompt = Users.get_config(None, "systemprompt")
+    plugins = Users.extract_plugins_config(None)
+    robot = config.ChatGPTbot
+    if not api_key:
+        api_key = getattr(config, "API_KEY", None)
+    if not api_url:
+        api_url = getattr(config, "API_URL", None)
+
+    logger.warning("Guest 收到召唤：caller=%s chat=%s query=%s text=%r", caller_id, chatid, guest_query_id[:12], text[:80])
+
+    # Guest 首次应答建立一个可编辑的 inline 消息；结果只会在原调用聊天中出现。
+    initial = "`宵雫思索中 ▪︎□□`"
+    try:
+        sent = await context.bot._post("answerGuestQuery", data={
+            "guest_query_id": guest_query_id,
+            "result": {
+                "type": "article", "id": guest_query_id[:64], "title": "宵雫",
+                "input_message_content": {"message_text": initial, "parse_mode": "MarkdownV2"},
+            },
+        })
+        inline_message_id = str((sent or {}).get("inline_message_id") or "")
+    except Exception as exc:
+        logger.exception("answerGuestQuery 初始应答失败：%s", exc)
+        return
+    if not inline_message_id:
+        logger.error("answerGuestQuery 未返回 inline_message_id")
+        return
+
+    result = ""
+    last_rendered = ""
+    try:
+        async for chunk in robot.ask_stream_async(
+            text,
+            convo_id=guest_convo_id,
+            pass_history=0,
+            model=engine,
+            language=language,
+            api_url=api_url,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            plugins=plugins,
+        ):
+            if "message_search_stage_" in chunk:
+                continue
+            result += chunk
+            # Guest 走 inline_message_id 编辑，不能使用 chat_id/message_id。
+            rendered = escape(result, italic=False)
+            if rendered and len(result) % 30 < max(len(chunk), 1) and rendered != last_rendered:
+                try:
+                    await context.bot.edit_message_text(
+                        text=rendered,
+                        inline_message_id=inline_message_id,
+                        parse_mode="MarkdownV2",
+                        disable_web_page_preview=True,
+                    )
+                    last_rendered = rendered
+                except Exception as exc:
+                    logger.debug("Guest 流式编辑跳过：%s", exc)
+        final = escape(result or "……这次没有收到可以回答的内容。", italic=False)
+        if final != last_rendered:
+            await context.bot.edit_message_text(
+                text=final,
+                inline_message_id=inline_message_id,
+                parse_mode="MarkdownV2",
+                disable_web_page_preview=True,
+            )
+    except Exception as exc:
+        logger.exception("Guest 推理失败：%s", exc)
+        error_text = "……刚才的回答出了问题，请再试一次。"
+        try:
+            await context.bot.edit_message_text(text=error_text, inline_message_id=inline_message_id)
+        except Exception:
+            pass
+
+
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def change_model(update, context):
@@ -2109,41 +2236,13 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(role_dialogue_button, pattern=r"^ROLE_"))
     application.add_handler(CallbackQueryHandler(button_press))
 
-    # 统一文本消息路由（含 Guest 检测）
-    # PTB 22.x 的 Message 类没有 is_guest_message 字段, 需从 to_dict() 读取原始 JSON
-    async def role_text_router(update, context):
-        # 检测是否有 @bot 提及（用于 Guest 消息）
-        _raw = update.to_dict() if hasattr(update, 'to_dict') else {}
-        _msg_raw = _raw.get('message', _raw.get('business_message', {}))
-        # 所有消息都记录一下关键字段
-        logger.warning("ROUTER_DEBUG: msg_keys=%s is_guest=%s chat_type=%s text=%r",
-                       list(_msg_raw.keys()),
-                       _msg_raw.get('is_guest_message', 'N/A'),
-                       _msg_raw.get('chat', {}).get('type', '?'),
-                       (_msg_raw.get('text', '')[:80]))
+    # PTB 22.5 不认识 Update.guest_message；TypeHandler 捕获所有 Update，
+    # handler 内仅处理 api_kwargs 中实际存在的 guest_message。
+    application.add_handler(TypeHandler(Update, guest_update_handler, block=False), group=-1)
 
-        is_guest = _msg_raw.get('is_guest_message', False) is True
-        if is_guest:
-            # Guest 消息: 直接走完整流水线，绕过装饰器
-            logger.warning("GUEST_HIT: 检测到 Guest 消息!")
-            # 直接调 getChatGPT，不走 command_bot 的装饰器链
-            _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _ = await GetMesageInfo(update, context, voice=False)
-            origin_message = update.effective_message
-            text = origin_message.text or origin_message.caption or ""
-            title = _msg_raw.get('from', {}).get('first_name', 'Guest')
-            robot, role, api_key, api_url = get_robot(convo_id)
-            await getChatGPT(
-                update_message=origin_message,
-                context=context,
-                title=title,
-                robot=robot,
-                message=text,
-                chatid=chatid,
-                messageid=origin_message.message_id,
-                convo_id=convo_id,
-                message_thread_id=message_thread_id
-            )
-            return
+    # 普通消息统一路由。Guest 更新由上方 TypeHandler 处理，
+    # 不会匹配 MessageHandler（PTB 22.5 的 update.message 为 None）。
+    async def role_text_router(update, context):
         if await _handle_role_pending_text(update, context):
             return
         await command_bot(update, context, has_command=False)
