@@ -87,7 +87,7 @@ LANGUAGES_TO_CODE = {
 current_date = datetime.now()
 Current_Date = current_date.strftime("%Y-%m-%d")
 systemprompt = os.environ.get('SYSTEMPROMPT', prompt.system_prompt.format(LANGUAGE, Current_Date))
-SYSTEMPROMPT_FILE = os.environ.get('SYSTEMPROMPT_FILE', '/home/persona_systemprompt.md')
+SYSTEMPROMPT_FILE = os.environ.get('SYSTEMPROMPT_FILE', '/home/persona/systemprompt.md')
 try:
     if SYSTEMPROMPT_FILE and os.path.isfile(SYSTEMPROMPT_FILE):
         file_prompt = Path(SYSTEMPROMPT_FILE).read_text(encoding='utf-8', errors='replace').strip()

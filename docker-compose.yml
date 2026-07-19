@@ -34,7 +34,7 @@ services:
       # - ./app/overrides/aient_utils_scripts.py:/home/aient/aient/utils/scripts.py:ro
       # - ./app/overrides/aient_run_python.py:/home/aient/aient/plugins/run_python.py:ro
       # - ./persona/persona.env:/home/persona.env:ro
-      # - ./persona/systemprompt.md:/home/persona_systemprompt.md:ro
+      # - ./persona/systemprompt.md:/home/persona/systemprompt.md:ro
       # - ./persona/start_message.txt:/home/persona_start_message.txt:ro
       # - ./persona/bot_description.txt:/home/persona_bot_description.txt:ro
       # - ./scripts/healthcheck.py:/home/scripts/healthcheck.py:ro

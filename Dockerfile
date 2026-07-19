@@ -29,8 +29,8 @@ COPY persona/build_persona_prompt.py /home/persona/build_persona_prompt.py
 COPY persona/persona.env        /home/persona.env
 COPY persona/start_message.txt  /home/persona_start_message.txt
 COPY persona/bot_description.txt /home/persona_bot_description.txt
-RUN python3 /home/persona/build_persona_prompt.py 2>/dev/null || \
-    echo "No persona modules found; systemprompt.md will be loaded from env"
+RUN python3 /home/persona/build_persona_prompt.py
+ENV SYSTEMPROMPT_FILE=/home/persona/systemprompt.md
 
 # ── 4. Inject scripts ──
 COPY scripts/healthcheck.py /home/scripts/healthcheck.py

@@ -757,7 +757,8 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     logger.warning(f"Could not process base64 image: {e}")
                 continue
             if result.strip().startswith("![image](data:image/") and image_has_send:
-                await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
+                if answer_messageid:
+                    await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
                 break
             tmpresult = result
             if re.sub(r"```", '', result.split("\n")[-1]).count("`") % 2 != 0:
@@ -778,7 +779,13 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                 except Exception:
                     pass
                 # Draft 没有普通 message_id，不能启动 editMessageText 状态动画。
-                if not draft_active and answer_messageid:
+                if draft_active:
+                    try:
+                        await _update_draft(escape(tmpresult))
+                        lastresult = escape(tmpresult)
+                    except Exception as exc:
+                        logger.debug("Draft 阶段更新跳过：%s", exc)
+                elif answer_messageid:
                     think_stop_event = asyncio.Event()
                     stage_lang = get_current_lang(config_convo_id)
                     stage_base = strings[data][stage_lang]
@@ -1034,6 +1041,17 @@ async def _role_mutation_allowed(update, context, query=None):
         await query.answer(text=text, show_alert=True)
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+    return False
+
+
+async def _role_shared_memory_mutation_allowed(update, context):
+    """群组角色共同记忆属于共享状态，只允许管理员修改。"""
+    if await _role_group_admin(update, context):
+        return True
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="只有群管理员可以修改这个群组的角色共同记忆。",
+    )
     return False
 
 
@@ -1461,9 +1479,15 @@ async def button_press(update, context):
         return await role_dialogue_button(update, context)
     _, _, _, _, _, _, _, _, convo_id, _, _, _ = await GetMesageInfo(update, context)
     callback_query = update.callback_query
+    data = callback_query.data
+    # callback 可从旧面板触发；全局模式下拒绝所有会持久化配置的动作。
+    if not _global_config_change_permitted(update) and (
+        data.endswith(("_MODELS", "_LANGUAGES", "_PREFERENCES", "_PLUGINS"))
+    ):
+        await callback_query.answer(text="全局模式下只有管理员可以修改此配置。", show_alert=True)
+        return
     info_message = update_info_message(convo_id)
     await callback_query.answer()
-    data = callback_query.data
     banner = strings['message_banner'][get_current_lang(convo_id)]
     import telegram
     try:
@@ -1781,12 +1805,33 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await _edit_guest("……刚才的回答出了问题，请再试一次。", plain=True)
 
 
+def _global_config_change_permitted(update):
+    if config.CHAT_MODE != "global":
+        return True
+    user = getattr(update, "effective_user", None)
+    return bool(config.ADMIN_LIST and user is not None and str(user.id) in config.ADMIN_LIST)
+
+
+async def _configuration_change_allowed(update, context, action_name):
+    """全局模式下的模型、接口等配置只允许管理员变更。"""
+    if _global_config_change_permitted(update):
+        return True
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"{action_name}仅允许管理员在全局模式下修改。",
+    )
+    return False
+
+
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def change_model(update, context):
     """Quick model change using the command"""
     _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _ = await GetMesageInfo(update, context)
     lang = get_current_lang(convo_id)
+
+    if not await _configuration_change_allowed(update, context, "模型切换"):
+        return
 
     if not context.args:
         message = await context.bot.send_message(
@@ -1966,6 +2011,8 @@ async def role_memory_command(update, context):
         await context.bot.send_message(chat_id=chatid, message_thread_id=message_thread_id, text=text)
         return
     action = str(context.args[0]).lower()
+    if action in ("add", "del") and not await _role_shared_memory_mutation_allowed(update, context):
+        return
     if action == "add":
         payload = " ".join(context.args[1:]).strip()
         if not payload:
@@ -1991,6 +2038,8 @@ async def remember_role_command(update, context):
     _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _ = await GetMesageInfo(update, context, voice=False)
     if not context.args:
         await context.bot.send_message(chat_id=chatid, message_thread_id=message_thread_id, text="请直接写要提升为当前角色共同记忆的内容，例如：/remember_role 主人喜欢少糖。")
+        return
+    if not await _role_shared_memory_mutation_allowed(update, context):
         return
     owner_key, active, runtime_convo_id = active_role_context(update, chatid, convo_id)
     role_id = active.get("role_id")
@@ -2147,6 +2196,8 @@ async def start(update, context): # 当用户输入/start时，返回文本
         message = _PERSONA_DEFAULTS["START_MESSAGE"].format(username=user.username)
     if not message.endswith("\n"):
         message += "\n"
+    if context.args and not await _configuration_change_allowed(update, context, "接口配置"):
+        return
     if len(context.args) == 2 and context.args[1].startswith("sk-"):
         api_url = context.args[0]
         api_key = context.args[1]
