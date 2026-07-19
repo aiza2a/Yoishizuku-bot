@@ -1562,6 +1562,21 @@ async def inlinequery(update: Update, context) -> None:
 
         await update.inline_query.answer(results)
 
+async def guest_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle @mention when bot is not in the group (Guest Mode).
+
+    Requires Guest Mode enabled in BotFather (/setguestmode).
+    Guest messages bypass GroupAuthorization (already handled in decorator).
+    """
+    if not getattr(update.message, 'is_guest_message', False):
+        return
+    logger.info("Guest message from user=%s in chat=%s text=%s",
+                update.effective_user.id, update.effective_chat.id,
+                (update.message.text or "")[:80])
+    # Route through command_bot (GroupAuthorization already allows guest)
+    await command_bot(update, context, has_command=False)
+
+
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def change_model(update, context):
@@ -1979,6 +1994,15 @@ async def unknown(update, context): # 当用户输入未知命令时，返回文
 async def post_init(application: Application) -> None:
     if GET_MODELS:
         await get_initial_model()
+    try:
+        me = await application.bot.get_me()
+        guest_mode = getattr(me, "supports_guest_queries", False)
+        if not guest_mode:
+            logger.warning("⚠️ Guest Mode 未在 BotFather 开启。@bot 唤起功能不可用。请使用 /setguestmode 启用。")
+        else:
+            logger.info("✅ Guest Mode 已开启，支持任意聊天 @bot 唤起")
+    except Exception:
+        pass
 
     commands_en = [
         BotCommand("info", "Basic information"),
@@ -2072,6 +2096,15 @@ if __name__ == '__main__':
         if await _handle_role_pending_text(update, context):
             return
         await command_bot(update, context, has_command=False)
+
+    # Guest message handler (@mention without bot in group) - runs before general text
+    class _GuestFilter(filters.MessageFilter):
+        def filter(self, m): return getattr(m, 'is_guest_message', False) is True
+    GUEST = _GuestFilter()
+    application.add_handler(MessageHandler(
+        (filters.TEXT | filters.VOICE) & ~filters.COMMAND & GUEST,
+        guest_message_handler, block=False
+    ))
 
     application.add_handler(MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, role_text_router, block = False))
     application.add_handler(MessageHandler(
