@@ -2029,7 +2029,7 @@ async def post_init(application: Application) -> None:
         if not guest_mode:
             logger.warning("⚠️ Guest Mode 未在 BotFather 开启。@bot 唤起功能不可用。请用 BotFather MiniApp 开启。")
         else:
-            logger.info("✅ Guest Mode 已开启，支持任意聊天 @bot 唤起")
+            logger.warning("✅ Guest Mode 已开启，支持任意聊天 @bot 唤起")
     except Exception:
         pass
 
