@@ -2020,10 +2020,11 @@ async def post_init(application: Application) -> None:
     if GET_MODELS:
         await get_initial_model()
     try:
-        me = await application.bot.get_me()
-        guest_mode = getattr(me, "supports_guest_queries", False)
+        # PTB 22.x 的 User 类未映射 supports_guest_queries，需用原始 API 拿
+        raw_me = await application.bot.request.post("getMe")
+        guest_mode = raw_me.get("result", {}).get("supports_guest_queries", False)
         if not guest_mode:
-            logger.warning("⚠️ Guest Mode 未在 BotFather 开启。@bot 唤起功能不可用。请使用 /setguestmode 启用。")
+            logger.warning("⚠️ Guest Mode 未在 BotFather 开启。@bot 唤起功能不可用。请用 BotFather MiniApp 开启。")
         else:
             logger.info("✅ Guest Mode 已开启，支持任意聊天 @bot 唤起")
     except Exception:
