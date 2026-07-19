@@ -2020,9 +2020,12 @@ async def post_init(application: Application) -> None:
     if GET_MODELS:
         await get_initial_model()
     try:
-        # PTB 22.x 的 User 类未映射 supports_guest_queries，需用原始 API 拿
-        raw_me = await application.bot.request.post("getMe")
-        guest_mode = raw_me.get("result", {}).get("supports_guest_queries", False)
+        # PTB 22.x 的 User 类未映射 supports_guest_queries，直调 Bot API
+        import httpx
+        token = os.environ.get("BOT_TOKEN", "")
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f"https://api.telegram.org/bot{token}/getMe", timeout=10)
+            guest_mode = r.json().get("result", {}).get("supports_guest_queries", False)
         if not guest_mode:
             logger.warning("⚠️ Guest Mode 未在 BotFather 开启。@bot 唤起功能不可用。请用 BotFather MiniApp 开启。")
         else:
