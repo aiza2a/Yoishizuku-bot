@@ -25,10 +25,14 @@ COPY app/overrides/aient_run_python.py     /home/aient_run_python.py
 COPY app/overrides/aient_utils_scripts.py  /home/aient_utils_scripts.py
 
 # ── 3. Inject persona assets ──
-COPY persona/systemprompt.md  /home/persona_systemprompt.md
+# systemprompt.md is generated from persona/modules/*.md at build time
+COPY persona/modules/  /home/persona/modules/
+COPY persona/build_persona_prompt.py /home/persona/
 COPY persona/persona.env       /home/persona.env
 COPY persona/start_message.txt /home/persona_start_message.txt
 COPY persona/bot_description.txt /home/persona_bot_description.txt
+# Generate systemprompt.md from modules (works even without modules dir)
+RUN python3 /home/persona/build_persona_prompt.py 2>/dev/null || echo "No persona modules found; systemprompt.md will be loaded from env"
 
 # ── 4. Inject scripts ──
 COPY scripts/healthcheck.py /home/scripts/healthcheck.py
