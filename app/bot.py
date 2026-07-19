@@ -2021,8 +2021,8 @@ async def post_init(application: Application) -> None:
         await get_initial_model()
     try:
         # PTB 22.x 的 User 类未映射 supports_guest_queries，直调 Bot API
-        import httpx
-        token = os.environ.get("BOT_TOKEN", "")
+        import httpx, os as _post_os
+        token = _post_os.environ.get("BOT_TOKEN", "")
         async with httpx.AsyncClient() as c:
             r = await c.get(f"https://api.telegram.org/bot{token}/getMe", timeout=10)
             guest_mode = r.json().get("result", {}).get("supports_guest_queries", False)
@@ -2033,6 +2033,7 @@ async def post_init(application: Application) -> None:
     except Exception:
         import traceback
         logger.error("(Guest) 检测异常:\n%s", traceback.format_exc()[:500])
+        logger.warning("(Guest) ⚠️ 请检查 .env 中 BOT_TOKEN 是否正确")
 
     commands_en = [
         BotCommand("info", "Basic information"),
