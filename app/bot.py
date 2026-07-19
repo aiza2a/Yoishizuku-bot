@@ -387,7 +387,7 @@ async def delete_message(update, context, messageid = [], delay=60):
                 # print("delete_message error", e)
                 # print('\033[0m')
 
-from telegram.error import Forbidden, TelegramError
+from telegram.error import Forbidden, TelegramError, RetryAfter
 async def is_bot_blocked(bot, user_id: int) -> bool:
     try:
         # 尝试向用户发送一条测试消息
@@ -448,13 +448,21 @@ async def animate_status(context, chatid, message_id, convo_id, stop_event, text
         try:
             content = text_provider(frame)
             if content and content != last_text:
-                await context.bot.edit_message_text(
-                    chat_id=chatid,
-                    message_id=message_id,
-                    text=escape(content),
-                    parse_mode="MarkdownV2",
-                    disable_web_page_preview=True,
-                )
+                if RICH_MODE:
+                    await context.bot._post("editMessageText", data={
+                        "chat_id": chatid,
+                        "message_id": message_id,
+                        "rich_message": {"markdown": escape(content)},
+                        "disable_web_page_preview": True,
+                    })
+                else:
+                    await context.bot.edit_message_text(
+                        chat_id=chatid,
+                        message_id=message_id,
+                        text=escape(content),
+                        parse_mode="MarkdownV2",
+                        disable_web_page_preview=True,
+                    )
                 last_text = content
         except Exception:
             # Ignore edit conflicts / message-not-modified / race with final answer
@@ -592,47 +600,61 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     if "gemini" in model_name:
         Frequency_Modification = 1
 
-    # ── Rich/Plain 消息分发层(RICH_MODE 开关控制) ──
+    # ── Rich/Plain 消息分发层（RICH_MODE 开关控制） ──
+    # PTB 的 request.post 是底层 HTTP 接口，不能传 data=。
+    # 统一通过 Bot._post 调用尚未被 PTB 22.5 封装的 Bot API 10.0 方法。
+    async def _bot_api(method, data):
+        return await context.bot._post(method, data=data)
+
     async def _edit_msg(text, msg_id=None, *, plain=False):
-        """编辑消息: Rich API(parse_mode=None) 或 MarkdownV2"""
+        """编辑消息：Rich Message 或 MarkdownV2。"""
         mid = msg_id or answer_messageid
         if RICH_MODE and not plain:
-            await context.bot.request.post("editMessageText", data={
-                "chat_id": chatid, "message_id": mid,
+            await _bot_api("editMessageText", {
+                "chat_id": chatid,
+                "message_id": mid,
                 "rich_message": {"markdown": text},
                 "disable_web_page_preview": True,
             })
         else:
-            pm = None if plain else 'MarkdownV2'
+            pm = None if plain else "MarkdownV2"
             await context.bot.edit_message_text(
-                chat_id=chatid, message_id=mid, text=text,
-                parse_mode=pm, disable_web_page_preview=True,
-                read_timeout=time_out, write_timeout=time_out,
-                pool_timeout=time_out, connect_timeout=time_out,
+                chat_id=chatid,
+                message_id=mid,
+                text=text,
+                parse_mode=pm,
+                disable_web_page_preview=True,
+                read_timeout=time_out,
+                write_timeout=time_out,
+                pool_timeout=time_out,
+                connect_timeout=time_out,
             )
 
     async def _send_final(text, *, draft=False, plain=False):
-        """定稿: Rich(sendRichMessage) 或 MarkdownV2(sendMessage)"""
+        """定稿：Rich Message 或 MarkdownV2。"""
         if RICH_MODE and not plain:
-            return await context.bot.request.post("sendRichMessage", data={
-                "chat_id": chatid, "message_thread_id": message_thread_id,
+            return await _bot_api("sendRichMessage", {
+                "chat_id": chatid,
+                "message_thread_id": message_thread_id,
                 "rich_message": {"markdown": text},
                 "disable_web_page_preview": True,
             })
-        else:
-            pm = None if plain else 'MarkdownV2'
-            if draft:
-                return await context.bot.request.post("sendMessage", data={
-                    "chat_id": chatid, "message_thread_id": message_thread_id,
-                    "text": text, "parse_mode": pm,
-                    "disable_web_page_preview": True,
-                })
-            else:
-                return await context.bot.send_message(
-                    chat_id=chatid, message_thread_id=message_thread_id,
-                    text=text, parse_mode=pm,
-                    disable_web_page_preview=True,
-                )
+        pm = None if plain else "MarkdownV2"
+        if draft:
+            return await _bot_api("sendMessage", {
+                "chat_id": chatid,
+                "message_thread_id": message_thread_id,
+                "text": text,
+                "parse_mode": pm,
+                "disable_web_page_preview": True,
+            })
+        return await context.bot.send_message(
+            chat_id=chatid,
+            message_thread_id=message_thread_id,
+            text=text,
+            parse_mode=pm,
+            disable_web_page_preview=True,
+        )
 
 
     think_stop_event = None
@@ -643,35 +665,42 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
         if is_private:
             try:
                 if RICH_MODE:
-                    draft_resp = await context.bot.request.post("sendRichMessageDraft", data={
-                        "chat_id": chatid, "message_thread_id": message_thread_id,
+                    draft_resp = await _bot_api("sendRichMessageDraft", {
+                        "chat_id": chatid,
+                        "message_thread_id": message_thread_id,
                         "rich_message": {"markdown": escape(thinking_text(get_current_lang(config_convo_id), 0))},
                         "reply_to_message_id": messageid,
                     })
                 else:
-                    draft_resp = await context.bot.request.post("sendMessageDraft", data={
-                        "chat_id": chatid, "message_thread_id": message_thread_id,
+                    draft_resp = await _bot_api("sendMessageDraft", {
+                        "chat_id": chatid,
+                        "message_thread_id": message_thread_id,
                         "text": escape(thinking_text(get_current_lang(config_convo_id), 0)),
                         "parse_mode": "MarkdownV2",
                         "reply_to_message_id": messageid,
                     })
                 answer_messageid = draft_resp["result"]["message_id"]
                 draft_active = True
-            except Exception:
+            except Exception as exc:
+                logger.warning("Draft 初始化失败，回退为常规消息：%s", exc)
                 draft_active = False
         if not draft_active:
             think_text = escape(thinking_text(get_current_lang(config_convo_id), 0))
             if RICH_MODE:
-                sent = await context.bot.request.post("sendMessage", data={
-                    "chat_id": chatid, "message_thread_id": message_thread_id,
-                    "text": think_text, "parse_mode": "MarkdownV2",
+                sent = await _bot_api("sendMessage", {
+                    "chat_id": chatid,
+                    "message_thread_id": message_thread_id,
+                    "text": think_text,
+                    "parse_mode": "MarkdownV2",
                     "reply_to_message_id": messageid,
                 })
                 answer_messageid = sent["result"]["message_id"]
             else:
                 answer_messageid = (await context.bot.send_message(
-                    chat_id=chatid, message_thread_id=message_thread_id,
-                    text=think_text, parse_mode='MarkdownV2',
+                    chat_id=chatid,
+                    message_thread_id=message_thread_id,
+                    text=think_text,
+                    parse_mode="MarkdownV2",
                     reply_to_message_id=messageid,
                 )).message_id
         think_stop_event = asyncio.Event()
@@ -1669,6 +1698,36 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     result = ""
     last_rendered = ""
+    last_edit_at = 0.0
+    edit_interval = 1.2
+
+    async def _edit_guest(text, *, plain=False):
+        """按 Telegram Guest 限制节流编辑，并处理 429 RetryAfter。"""
+        nonlocal last_edit_at
+        import time as _time
+        wait = edit_interval - (_time.monotonic() - last_edit_at)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        while True:
+            try:
+                await context.bot.edit_message_text(
+                    text=text,
+                    inline_message_id=inline_message_id,
+                    parse_mode=None if plain else "MarkdownV2",
+                    disable_web_page_preview=True,
+                )
+                last_edit_at = _time.monotonic()
+                return True
+            except RetryAfter as exc:
+                delay = float(exc.retry_after) + 0.5
+                logger.warning("Guest 编辑受限，%.1f 秒后重试", delay)
+                await asyncio.sleep(delay)
+            except Exception as exc:
+                if "message is not modified" in str(exc).lower():
+                    return True
+                logger.warning("Guest 编辑失败：%s", exc)
+                return False
+
     try:
         async for chunk in robot.ask_stream_async(
             text,
@@ -1684,34 +1743,17 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             if "message_search_stage_" in chunk:
                 continue
             result += chunk
-            # Guest 走 inline_message_id 编辑，不能使用 chat_id/message_id。
+            # Guest 走 inline_message_id 编辑，限制频率以避免 Flood control。
             rendered = escape(result, italic=False)
-            if rendered and len(result) % 30 < max(len(chunk), 1) and rendered != last_rendered:
-                try:
-                    await context.bot.edit_message_text(
-                        text=rendered,
-                        inline_message_id=inline_message_id,
-                        parse_mode="MarkdownV2",
-                        disable_web_page_preview=True,
-                    )
+            if rendered and rendered != last_rendered:
+                if await _edit_guest(rendered):
                     last_rendered = rendered
-                except Exception as exc:
-                    logger.debug("Guest 流式编辑跳过：%s", exc)
         final = escape(result or "……这次没有收到可以回答的内容。", italic=False)
         if final != last_rendered:
-            await context.bot.edit_message_text(
-                text=final,
-                inline_message_id=inline_message_id,
-                parse_mode="MarkdownV2",
-                disable_web_page_preview=True,
-            )
+            await _edit_guest(final)
     except Exception as exc:
         logger.exception("Guest 推理失败：%s", exc)
-        error_text = "……刚才的回答出了问题，请再试一次。"
-        try:
-            await context.bot.edit_message_text(text=error_text, inline_message_id=inline_message_id)
-        except Exception:
-            pass
+        await _edit_guest("……刚才的回答出了问题，请再试一次。", plain=True)
 
 
 @decorators.GroupAuthorization
