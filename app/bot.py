@@ -163,6 +163,9 @@ MEMORY_SESSION_SUMMARY = {}
 ROLE_DATA_ROOT = _persona_os.environ.get("ROLE_DATA_ROOT", "/home/role_data")
 ROLE_DIALOGUES = RoleDialogueStore(ROLE_DATA_ROOT)
 
+# Draft 临时预览默认关闭。设为 1 才在私聊使用 sendMessageDraft / sendRichMessageDraft。
+DRAFT_MODE = _persona_os.environ.get("DRAFT_MODE", "").lower() in ("1", "true", "yes")
+
 # Rich Message 模式开关: 启用后使用 Bot API 10.0+ sendRichMessage / editMessageText(rich_message)
 RICH_MODE = _persona_os.environ.get("RICH_MESSAGE", "").lower() in ("1", "true", "yes")
 
@@ -678,7 +681,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     draft_active = False
     draft_id = secrets.randbelow(2**31 - 1) + 1
     answer_messageid = None
-    is_private = not str(chatid).startswith('-')
+    is_private = DRAFT_MODE and not str(chatid).startswith('-')
     if not await is_bot_blocked(context.bot, chatid):
         if is_private:
             try:

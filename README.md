@@ -12,7 +12,7 @@
 
 ## 特性
 
-- **私聊 Draft 流**：优先使用 `sendMessageDraft` 实时显示，结束后发送正式消息；旧 API 或 Draft 失败时自动回退为常规编辑流。
+- **私聊编辑流**：默认发送常规占位消息后实时编辑；设置 `DRAFT_MODE=1` 才启用 Telegram Draft 临时预览，结束后发送正式消息。
 - **群聊编辑流**：群内提及、回复及普通群会话使用 `editMessageText` 流式更新。
 - **Guest Chat Mode**：开启后无需邀请 bot 进群，可在任意支持的聊天中用 `@Yoishizuku_bot 问题` 临时召唤。Guest 回复通过 `answerGuestQuery` 发回原聊天，并使用内联消息编辑流更新。
 - **Rich Message 可选模式**：设置 `RICH_MESSAGE=1` 后使用 Telegram Bot API 10.0 富文本消息，支持标题、表格、引用、LaTex、可折叠内容及嵌入媒体；默认保持 MarkdownV2 兼容模式。
