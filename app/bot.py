@@ -2031,7 +2031,8 @@ async def post_init(application: Application) -> None:
         else:
             logger.warning("✅ Guest Mode 已开启，支持任意聊天 @bot 唤起")
     except Exception:
-        pass
+        import traceback
+        logger.error("(Guest) 检测异常:\n%s", traceback.format_exc()[:500])
 
     commands_en = [
         BotCommand("info", "Basic information"),
