@@ -592,14 +592,30 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
 
     think_stop_event = None
     think_task = None
+    draft_active = False
+    is_private = not str(chatid).startswith('-')
     if not await is_bot_blocked(context.bot, chatid):
-        answer_messageid = (await context.bot.send_message(
-            chat_id=chatid,
-            message_thread_id=message_thread_id,
-            text=escape(thinking_text(get_current_lang(config_convo_id), 0)),
-            parse_mode='MarkdownV2',
-            reply_to_message_id=messageid,
-        )).message_id
+        if is_private:
+            try:
+                draft_resp = await context.bot.request.post("sendMessageDraft", data={
+                    "chat_id": chatid,
+                    "message_thread_id": message_thread_id,
+                    "text": escape(thinking_text(get_current_lang(config_convo_id), 0)),
+                    "parse_mode": "MarkdownV2",
+                    "reply_to_message_id": messageid,
+                })
+                answer_messageid = draft_resp["result"]["message_id"]
+                draft_active = True
+            except Exception:
+                draft_active = False
+        if not draft_active:
+            answer_messageid = (await context.bot.send_message(
+                chat_id=chatid,
+                message_thread_id=message_thread_id,
+                text=escape(thinking_text(get_current_lang(config_convo_id), 0)),
+                parse_mode='MarkdownV2',
+                reply_to_message_id=messageid,
+            )).message_id
         think_stop_event = asyncio.Event()
         think_task = asyncio.create_task(
             animate_thinking(context, chatid, answer_messageid, config_convo_id, think_stop_event, message_thread_id)
@@ -781,6 +797,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                             logger.warning("Telegram parse fallback used for split message; chars=%s", len(send_split_message))
                         else:
                             print("error:", str(e))
+                draft_active = False  # split: new message is not a draft
                 answer_messageid = (await context.bot.send_message(
                     chat_id=chatid,
                     message_thread_id=message_thread_id,
@@ -849,10 +866,40 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             logger.warning("Telegram code-entity fallback used; chars=%s", len(now_result))
         elif now_result:
             try:
-                await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=now_result, parse_mode='MarkdownV2', disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
+                if draft_active:
+                    final_msg_resp = await context.bot.request.post("sendMessage", data={
+                        "chat_id": chatid,
+                        "message_thread_id": message_thread_id,
+                        "text": now_result,
+                        "parse_mode": "MarkdownV2",
+                        "disable_web_page_preview": True,
+                    })
+                    draft_active = False
+                    try:
+                        await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
+                    except Exception:
+                        pass
+                else:
+                    await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=now_result, parse_mode='MarkdownV2', disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
             except Exception as e:
                 if "parse entities" in str(e):
-                    await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=tmpresult, disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
+                    if draft_active:
+                        try:
+                            await context.bot.request.post("sendMessage", data={
+                                "chat_id": chatid,
+                                "message_thread_id": message_thread_id,
+                                "text": tmpresult,
+                                "disable_web_page_preview": True,
+                            })
+                            draft_active = False
+                            try:
+                                await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    else:
+                        await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=tmpresult, disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
 
     # Persist completed dialogue so it survives container/VPS restarts.
     if str(message or "").strip() and str(tmpresult or "").strip():
