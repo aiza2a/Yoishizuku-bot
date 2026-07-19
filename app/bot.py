@@ -2108,24 +2108,41 @@ if __name__ == '__main__':
     application.add_handler(InlineQueryHandler(inlinequery))
     application.add_handler(CallbackQueryHandler(role_dialogue_button, pattern=r"^ROLE_"))
     application.add_handler(CallbackQueryHandler(button_press))
-    async def role_text_router(update, context):
-        if await _handle_role_pending_text(update, context):
-            return
-        await command_bot(update, context, has_command=False)
 
-    # Guest message handler - 合并到 role_text_router 中检测
-    # (PTB 22.x 的 Message 类没有 is_guest_message 字段, 无法通过 filter 精确匹配)
+    # 统一文本消息路由（含 Guest 检测）
+    # PTB 22.x 的 Message 类没有 is_guest_message 字段, 需从 to_dict() 读取原始 JSON
     async def role_text_router(update, context):
-        # 检测 Guest @mention (PTB 不解析该字段, 需从原始 JSON 取)
+        # 检测是否有 @bot 提及（用于 Guest 消息）
         _raw = update.to_dict() if hasattr(update, 'to_dict') else {}
         _msg_raw = _raw.get('message', _raw.get('business_message', {}))
-        if _msg_raw.get('is_guest_message', False) is True:
-            # Guest 消息: 跳过 role pending/text, 走完整流水线
-            logger.info("Guest message from user=%s in chat=%s text=%s",
-                        update.effective_user.id, update.effective_chat.id,
-                        (update.message.text or "")[:80])
-            # GroupAuthorization 已放行 (见 decorators_override.py)
-            await command_bot(update, context, has_command=False)
+        # 所有消息都记录一下关键字段
+        logger.warning("ROUTER_DEBUG: msg_keys=%s is_guest=%s chat_type=%s text=%r",
+                       list(_msg_raw.keys()),
+                       _msg_raw.get('is_guest_message', 'N/A'),
+                       _msg_raw.get('chat', {}).get('type', '?'),
+                       (_msg_raw.get('text', '')[:80]))
+
+        is_guest = _msg_raw.get('is_guest_message', False) is True
+        if is_guest:
+            # Guest 消息: 直接走完整流水线，绕过装饰器
+            logger.warning("GUEST_HIT: 检测到 Guest 消息!")
+            # 直接调 getChatGPT，不走 command_bot 的装饰器链
+            _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _ = await GetMesageInfo(update, context, voice=False)
+            origin_message = update.effective_message
+            text = origin_message.text or origin_message.caption or ""
+            title = _msg_raw.get('from', {}).get('first_name', 'Guest')
+            robot, role, api_key, api_url = get_robot(convo_id)
+            await getChatGPT(
+                update_message=origin_message,
+                context=context,
+                title=title,
+                robot=robot,
+                message=text,
+                chatid=chatid,
+                messageid=origin_message.message_id,
+                convo_id=convo_id,
+                message_thread_id=message_thread_id
+            )
             return
         if await _handle_role_pending_text(update, context):
             return
