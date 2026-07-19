@@ -81,7 +81,9 @@ def GroupAuthorization(func):
     async def wrapper(*args, **kwargs):
         update, context = args[:2]
         # Guest messages (@mention without bot in group) bypass group auth
-        if hasattr(update, 'message') and update.message and getattr(update.message, 'is_guest_message', False):
+        _raw = update.to_dict() if hasattr(update, 'to_dict') else {}
+        _msg_raw = _raw.get('message', _raw.get('business_message', {}))
+        if _msg_raw.get('is_guest_message', False) is True:
             return await func(*args, **kwargs)
         _, _, _, chatid, _, _, _, message_thread_id, convo_id, _, _, _ = await GetMesageInfo(update, context, voice=False)
         if update.effective_chat is None or not str(chatid).startswith('-'):

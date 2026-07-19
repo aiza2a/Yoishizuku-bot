@@ -1587,21 +1587,6 @@ async def inlinequery(update: Update, context) -> None:
 
         await update.inline_query.answer(results)
 
-async def guest_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle @mention when bot is not in the group (Guest Mode).
-
-    Requires Guest Mode enabled in BotFather (/setguestmode).
-    Guest messages bypass GroupAuthorization (already handled in decorator).
-    """
-    if not getattr(update.message, 'is_guest_message', False):
-        return
-    logger.info("Guest message from user=%s in chat=%s text=%s",
-                update.effective_user.id, update.effective_chat.id,
-                (update.message.text or "")[:80])
-    # Route through command_bot (GroupAuthorization already allows guest)
-    await command_bot(update, context, has_command=False)
-
-
 @decorators.GroupAuthorization
 @decorators.Authorization
 async def change_model(update, context):
@@ -2128,14 +2113,23 @@ if __name__ == '__main__':
             return
         await command_bot(update, context, has_command=False)
 
-    # Guest message handler (@mention without bot in group) - runs before general text
-    class _GuestFilter(filters.MessageFilter):
-        def filter(self, m): return getattr(m, 'is_guest_message', False) is True
-    GUEST = _GuestFilter()
-    application.add_handler(MessageHandler(
-        (filters.TEXT | filters.VOICE) & ~filters.COMMAND & GUEST,
-        guest_message_handler, block=False
-    ))
+    # Guest message handler - 合并到 role_text_router 中检测
+    # (PTB 22.x 的 Message 类没有 is_guest_message 字段, 无法通过 filter 精确匹配)
+    async def role_text_router(update, context):
+        # 检测 Guest @mention (PTB 不解析该字段, 需从原始 JSON 取)
+        _raw = update.to_dict() if hasattr(update, 'to_dict') else {}
+        _msg_raw = _raw.get('message', _raw.get('business_message', {}))
+        if _msg_raw.get('is_guest_message', False) is True:
+            # Guest 消息: 跳过 role pending/text, 走完整流水线
+            logger.info("Guest message from user=%s in chat=%s text=%s",
+                        update.effective_user.id, update.effective_chat.id,
+                        (update.message.text or "")[:80])
+            # GroupAuthorization 已放行 (见 decorators_override.py)
+            await command_bot(update, context, has_command=False)
+            return
+        if await _handle_role_pending_text(update, context):
+            return
+        await command_bot(update, context, has_command=False)
 
     application.add_handler(MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, role_text_router, block = False))
     application.add_handler(MessageHandler(
