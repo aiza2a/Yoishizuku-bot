@@ -953,30 +953,29 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             except Exception as e:
                 logger.warning(f"Failed to send image(s): {str(e)}")
 
-    now_result = escape(tmpresult, italic=False)
-    if now_result:
-        if "Can't parse entities: can't find end of code entity at byte offset" in tmpresult:
-            if draft_active:
-                await _send_final(tmpresult, draft=True, plain=True)
+    now_result = escape(tmpresult or "……这次没有收到可以回答的内容。", italic=False)
+    # Draft 是临时预览，必须无条件发送正式消息，不能受 lastresult 去重影响。
+    if draft_active:
+        try:
+            await _send_final(now_result, draft=True)
+            draft_active = False
+        except Exception as e:
+            if "parse entities" in str(e):
+                await _send_final(tmpresult or "……这次没有收到可以回答的内容。", draft=True, plain=True)
                 draft_active = False
-            elif answer_messageid:
+            else:
+                logger.warning("Draft 最终定稿失败：%s", e)
+    elif now_result:
+        if "Can't parse entities: can't find end of code entity at byte offset" in tmpresult:
+            if answer_messageid:
                 await update_message.reply_text(tmpresult)
             logger.warning("Telegram code-entity fallback used; chars=%s", len(now_result))
-        elif lastresult != now_result:
+        elif lastresult != now_result and answer_messageid:
             try:
-                if draft_active:
-                    # Draft 是临时预览；正式 Rich/普通消息定稿后无需删除 Draft。
-                    await _send_final(now_result, draft=True)
-                    draft_active = False
-                elif answer_messageid:
-                    await _edit_msg(now_result)
+                await _edit_msg(now_result)
             except Exception as e:
                 if "parse entities" in str(e):
-                    if draft_active:
-                        await _send_final(tmpresult, draft=True, plain=True)
-                        draft_active = False
-                    elif answer_messageid:
-                        await _edit_msg(tmpresult, plain=True)
+                    await _edit_msg(tmpresult, plain=True)
                 else:
                     logger.warning("最终消息定稿失败：%s", e)
 
