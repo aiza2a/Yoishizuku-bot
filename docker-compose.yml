@@ -1,13 +1,60 @@
-version: "3.5"
 services:
   chatgptbot:
-    container_name: chatgptbot
-    image: yym68686/chatgpt:latest
+    container_name: Yoishizuku-bot
+    image: yym68686/chatgpt@sha256:802678fc950c5769f7c714a505c04b63fdd34b842a39bfd41a2ba60026427647
+    user: "10001:10001"
+    env_file:
+      - ./.env
     environment:
-      - BOT_TOKEN=
-      - BASE_URL=
-      - API_KEY=
+      BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN is required}
+      API_KEY: ${API_KEY:?API_KEY is required}
+      BASE_URL: ${BASE_URL:?BASE_URL is required}
+      MODEL: ${MODEL:-deepseek-v4-flash-free}
+      TZ: Asia/Shanghai
+      PORT: ${PORT:-8080}
     volumes:
-      - ./user_configs:/home/user_configs
-    ports:
-      - 80:8080
+      - ./data/user_configs:/home/user_configs
+      - ./app/config.py:/home/config.py:ro
+      - ./app/bot.py:/home/bot.py:ro
+      - ./persona/persona.env:/home/persona.env:ro
+      - ./persona/systemprompt.md:/home/persona_systemprompt.md:ro
+      - ./app/overrides/memory_store.py:/home/memory_store.py:ro
+      - ./app/overrides/role_dialogue_store.py:/home/role_dialogue_store.py:ro
+      - ./data/memory:/home/memory_data
+      - ./data/roles:/home/role_data
+      - ./data/access:/home/access_data
+      - ./persona/bot_description.txt:/home/persona_bot_description.txt:ro
+      - ./persona/start_message.txt:/home/persona_start_message.txt:ro
+      - ./app/overrides/i18n_override.py:/home/i18n_override.py:ro
+      - ./app/overrides/access_control.py:/home/access_control.py:ro
+      - ./app/overrides/aient_base.py:/home/aient/aient/models/base.py:ro
+      - ./app/overrides/aient_chatgpt.py:/home/aient/aient/models/chatgpt.py:ro
+      - ./app/overrides/aient_utils_scripts.py:/home/aient/aient/utils/scripts.py:ro
+      - ./app/overrides/decorators_override.py:/home/utils/decorators.py:ro
+      - ./app/overrides/bot_utils_scripts.py:/home/utils/scripts.py:ro
+      - ./app/overrides/aient_run_python.py:/home/aient/aient/plugins/run_python.py:ro
+      - ./scripts/healthcheck.py:/home/scripts/healthcheck.py:ro
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 384m
+    cpus: 1.0
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "/home/scripts/healthcheck.py"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

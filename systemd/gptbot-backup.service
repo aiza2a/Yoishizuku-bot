@@ -1,0 +1,11 @@
+[Unit]
+Description=GPTBOT daily verified backup
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/data/docker_data/gptbot/scripts/daily_backup.sh
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+NoNewPrivileges=true

@@ -1,10 +1,15 @@
 import os
 import subprocess
+import tempfile
 from dotenv import load_dotenv
 load_dotenv()
 
-from utils.i18n import strings
+try:
+    from i18n_override import strings
+except Exception:
+    from utils.i18n import strings
 from datetime import datetime
+from pathlib import Path
 
 # We expose variables for access from other modules
 
@@ -15,6 +20,15 @@ from aient.aient.models import chatgpt, PLUGINS, whisper
 from telegram import InlineKeyboardButton
 
 NICK = os.environ.get('NICK', None)
+NICK_ALIASES = [
+    value.strip()
+    for value in os.environ.get('NICK_ALIASES', '').split(',')
+    if value.strip()
+]
+NICK_NAMES = []
+for _nick_name in ([NICK] if NICK else []) + NICK_ALIASES:
+    if _nick_name.casefold() not in {item.casefold() for item in NICK_NAMES}:
+        NICK_NAMES.append(_nick_name)
 PORT = int(os.environ.get('PORT', '8080'))
 BOT_TOKEN = os.environ.get('BOT_TOKEN', None)
 RESET_TIME = int(os.environ.get('RESET_TIME', '3600'))
@@ -60,19 +74,27 @@ LANGUAGES = {
     "English": False,
     "Simplified Chinese": False,
     "Traditional Chinese": False,
-    "Russian": False,
+    "Japanese": False,
 }
 
 LANGUAGES_TO_CODE = {
     "English": "en",
     "Simplified Chinese": "zh",
     "Traditional Chinese": "zh-hk",
-    "Russian": "ru",
+    "Japanese": "ja",
 }
 
 current_date = datetime.now()
 Current_Date = current_date.strftime("%Y-%m-%d")
 systemprompt = os.environ.get('SYSTEMPROMPT', prompt.system_prompt.format(LANGUAGE, Current_Date))
+SYSTEMPROMPT_FILE = os.environ.get('SYSTEMPROMPT_FILE', '/home/persona_systemprompt.md')
+try:
+    if SYSTEMPROMPT_FILE and os.path.isfile(SYSTEMPROMPT_FILE):
+        file_prompt = Path(SYSTEMPROMPT_FILE).read_text(encoding='utf-8', errors='replace').strip()
+        if file_prompt:
+            systemprompt = file_prompt
+except Exception as exc:
+    print(f'Failed to load SYSTEMPROMPT_FILE: {exc}')
 
 import json
 import tomllib
@@ -83,55 +105,89 @@ CONFIG_DIR = os.environ.get('CONFIG_DIR', 'user_configs')
 
 @contextmanager
 def file_lock(filename):
-    if os.name == 'nt':  # Windows系统
+    lockname = filename + '.lock'
+    os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
+    if os.name == 'nt':
         import msvcrt
-        with open(filename, 'a+') as f:
+        with open(lockname, 'a+b') as f:
+            if f.tell() == 0:
+                f.write(b'0')
+                f.flush()
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
             try:
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                yield f
+                yield
             finally:
-                try:
-                    f.seek(0)
-                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                except:
-                    pass  # 如果解锁失败，我们也不能做太多
-    else:  # Unix-like系统
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
         import fcntl
-        with open(filename, 'a+') as f:
+        with open(lockname, 'a+') as f:
+            os.chmod(lockname, 0o600)
+            fcntl.flock(f, fcntl.LOCK_EX)
             try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                yield f
+                yield
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
-def save_user_config(user_id, config):
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)
 
-    filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
+def _read_user_config_unlocked(filename):
+    if not os.path.exists(filename):
+        return {}
+    with open(filename, 'r', encoding='utf-8') as f:
+        content = f.read()
+    return json.loads(content) if content.strip() else {}
 
-    with file_lock(filename):
-        with open(filename, 'w') as f:
+
+def _atomic_write_user_config(filename, config):
+    directory = os.path.dirname(filename) or '.'
+    os.makedirs(directory, exist_ok=True)
+    fd, tmpname = tempfile.mkstemp(prefix=os.path.basename(filename) + '.', suffix='.tmp', dir=directory)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmpname, filename)
+        os.chmod(filename, 0o600)
+        dirfd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
+    finally:
+        if os.path.exists(tmpname):
+            os.unlink(tmpname)
+
+
+def save_user_config(user_id, config):
+    filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
+    with file_lock(filename):
+        _atomic_write_user_config(filename, config)
+
 
 def load_user_config(user_id):
     filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
-
-    if not os.path.exists(filename):
-        return {}
-
     with file_lock(filename):
-        with open(filename, 'r') as f:
-            content = f.read()
-            if not content.strip():
-                return {}
-            else:
-                return json.loads(content)
+        return _read_user_config_unlocked(filename)
+
 
 def update_user_config(user_id, key, value):
-    config = load_user_config(user_id)
-    config[key] = value
-    save_user_config(user_id, config)
+    filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
+    with file_lock(filename):
+        config = _read_user_config_unlocked(filename)
+        config[key] = value
+        _atomic_write_user_config(filename, config)
+
+
+def delete_user_config_key(user_id, key):
+    filename = os.path.join(CONFIG_DIR, f'{user_id}.json')
+    with file_lock(filename):
+        config = _read_user_config_unlocked(filename)
+        if key in config:
+            del config[key]
+            _atomic_write_user_config(filename, config)
 
 class NestedDict:
     def __init__(self):
@@ -182,9 +238,23 @@ class UserConfig:
             self.users["global"].update(self.preferences)
             self.users["global"].update(self.plugins)
             self.users["global"].update(self.languages)
-            for key in list(self.users["global"].keys()):
-                update_user_config("global", key, self.users["global"][key])
-        self.parameter_name_list = list(self.users["global"].keys())
+            save_user_config("global", self._persistable_config(self.users["global"]))
+        self.parameter_name_list = list(dict.fromkeys(
+            list(self.get_init_preferences().keys())
+            + list(self.preferences.keys())
+            + list(self.plugins.keys())
+            + list(self.languages.keys())
+            + list(self.users["global"].keys())
+        ))
+
+    def _persistable_config(self, config):
+        source = config.data if isinstance(config, NestedDict) else config
+        data = dict(source)
+        data.pop("api_key", None)
+        data.pop("api_url", None)
+        if data.get("systemprompt") == self.systemprompt:
+            data.pop("systemprompt", None)
+        return data
 
     def load_all_configs(self):
         if not os.path.exists(CONFIG_DIR):
@@ -207,18 +277,16 @@ class UserConfig:
                 if updated_config:
                     save_user_config(user_id, user_config)
 
-                # 正常处理配置项
+                # 全局密钥和地址始终来自环境；默认人设不重复持久化，
+                # 但用户显式设置的自定义人设需要跨重启保留。
+                custom_systemprompt = user_config.get("systemprompt")
                 for key, value in user_config.items():
+                    if key in ("api_key", "api_url", "systemprompt"):
+                        continue
                     self.users[user_id][key] = value
-                    if key == "api_url" and value != self.api_url:
-                        self.users[user_id]["api_url"] = self.api_url
-                        update_user_config(user_id, "api_url", self.api_url)
-                    if key == "api_key" and value != self.api_key:
-                        self.users[user_id]["api_key"] = self.api_key
-                        update_user_config(user_id, "api_key", self.api_key)
-                    if user_id == "global" and key == "systemprompt" and value != self.systemprompt:
-                        self.users[user_id]["systemprompt"] = self.systemprompt
-                        update_user_config(user_id, "systemprompt", self.systemprompt)
+                self.users[user_id]["api_key"] = self.api_key
+                self.users[user_id]["api_url"] = self.api_url
+                self.users[user_id]["systemprompt"] = custom_systemprompt or self.systemprompt
 
     def get_init_preferences(self):
         return {
@@ -238,8 +306,7 @@ class UserConfig:
             self.users[self.user_id].update(self.preferences)
             self.users[self.user_id].update(self.plugins)
             self.users[self.user_id].update(self.languages)
-            for key in self.users[self.user_id].keys():
-                update_user_config(user_id, key, self.users[self.user_id][key])
+            save_user_config(user_id, self._persistable_config(self.users[self.user_id]))
 
     def get_config(self, user_id = None, parameter_name = None):
         if parameter_name not in self.parameter_name_list:
@@ -253,13 +320,17 @@ class UserConfig:
     def set_config(self, user_id = None, parameter_name = None, value = None):
         if parameter_name not in self.parameter_name_list:
             raise ValueError(f"parameter_name {parameter_name} is not in the parameter_name_list: {self.parameter_name_list}")
-        if self.mode == "global":
-            self.users["global"][parameter_name] = value
-            update_user_config("global", parameter_name, value)
+        target_id = "global" if self.mode == "global" else user_id
         if self.mode == "multiusers":
             self.user_init(user_id)
-            self.users[self.user_id][parameter_name] = value
-            update_user_config(self.user_id, parameter_name, value)
+            target_id = self.user_id
+        self.users[target_id][parameter_name] = value
+        if parameter_name in ("api_key", "api_url"):
+            return
+        if parameter_name == "systemprompt" and value == self.systemprompt:
+            delete_user_config_key(target_id, parameter_name)
+            return
+        update_user_config(target_id, parameter_name, value)
 
     def extract_plugins_config(self, user_id = None):
         self.user_init(user_id)
@@ -356,18 +427,127 @@ def replace_with_asterisk(string):
     else:
         return None
 
-def update_info_message(user_id = None):
+def mask_url(url):
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        path = parts.path or ""
+        # Prefer compact display: https://****/completions
+        if path.rstrip("/").endswith("/chat/completions") or path.rstrip("/").endswith("/completions"):
+            return f"{parts.scheme}://****/completions"
+        # Fallback: keep scheme + masked host + last path segment
+        last = path.rstrip("/").split("/")[-1] if path and path != "/" else ""
+        if last:
+            return f"{parts.scheme}://****/{last}"
+        return f"{parts.scheme}://****"
+    except Exception:
+        return "https://****/completions"
+
+def _info_ui_lang(user_id=None):
+    lang = get_current_lang(user_id) if "get_current_lang" in globals() else "English"
+    if lang in ("Simplified Chinese", "zh", "zh-cn", "zh-hans"):
+        return "zh"
+    if lang in ("Traditional Chinese", "zh-hk", "zh-tw", "zh-hant"):
+        return "zh-hk"
+    if lang in ("Japanese", "ja"):
+        return "ja"
+    return "en"
+
+
+def update_info_message(user_id=None):
     api_key = Users.get_config(user_id, "api_key")
     api_url = Users.get_config(user_id, "api_url")
-    return "".join([
-        f"**🤖 Model:** `{Users.get_config(user_id, 'engine')}`\n\n",
-        f"**🔑 API_KEY:** `{replace_with_asterisk(api_key)}`\n\n" if api_key else "",
-        f"**🔗 BASE URL:** `{api_url}`\n\n" if api_url else "",
-        f"**🛜 WEB HOOK:** `{WEB_HOOK}`\n\n" if WEB_HOOK else "",
-        f"**🚰 Tokens usage:** `{get_robot(user_id)[0].tokens_usage[str(user_id)]}`\n\n" if get_robot(user_id)[0] else "",
-        f"**🃏 NICK:** `{NICK}`\n\n" if NICK else "",
-        f"**📖 Version:** `{check_for_updates()}`\n\n",
-    ])
+    ui_lang = _info_ui_lang(user_id)
+
+    labels = {
+        "en": {
+            "runtime": "Runtime",
+            "access": "Access",
+            "identity": "Identity",
+            "model": "Model",
+            "tokens": "Tokens",
+            "version": "Version",
+            "api_key": "API Key",
+            "base_url": "Base URL",
+            "webhook": "Webhook",
+            "nick": "Nick",
+        },
+        "zh": {
+            "runtime": "运行",
+            "access": "访问",
+            "identity": "身份",
+            "model": "模型",
+            "tokens": "用量",
+            "version": "版本",
+            "api_key": "密钥",
+            "base_url": "接口",
+            "webhook": "Webhook",
+            "nick": "昵称",
+        },
+        "zh-hk": {
+            "runtime": "運行",
+            "access": "訪問",
+            "identity": "身份",
+            "model": "模型",
+            "tokens": "用量",
+            "version": "版本",
+            "api_key": "密鑰",
+            "base_url": "介面",
+            "webhook": "Webhook",
+            "nick": "暱稱",
+        },
+        "ja": {
+            "runtime": "実行",
+            "access": "アクセス",
+            "identity": "識別",
+            "model": "モデル",
+            "tokens": "使用量",
+            "version": "バージョン",
+            "api_key": "APIキー",
+            "base_url": "エンドポイント",
+            "webhook": "Webhook",
+            "nick": "ニックネーム",
+        },
+    }
+    t = labels.get(ui_lang, labels["en"])
+
+    model = Users.get_config(user_id, "engine")
+    tokens = None
+    robot_pack = get_robot(user_id)
+    robot = robot_pack[0] if robot_pack else None
+    if robot:
+        try:
+            tokens = robot.tokens_usage[str(user_id)]
+        except Exception:
+            tokens = 0
+
+    lines = []
+    lines.append("**" + t["runtime"] + "**")
+    lines.append("• " + t["model"] + ": `" + str(model) + "`")
+    if tokens is not None:
+        lines.append("• " + t["tokens"] + ": `" + str(tokens) + "`")
+    lines.append("• " + t["version"] + ": `" + str(check_for_updates()) + "`")
+
+    access_lines = []
+    if api_key:
+        access_lines.append("• " + t["api_key"] + ": `" + str(replace_with_asterisk(api_key)) + "`")
+    if api_url:
+        access_lines.append("• " + t["base_url"] + ": `" + str(mask_url(api_url)) + "`")
+    if WEB_HOOK:
+        access_lines.append("• " + t["webhook"] + ": `" + str(WEB_HOOK) + "`")
+    if access_lines:
+        lines.append("")
+        lines.append("**" + t["access"] + "**")
+        lines.extend(access_lines)
+
+    if NICK:
+        lines.append("")
+        lines.append("**" + t["identity"] + "**")
+        lines.append("• " + t["nick"] + ": `" + str(NICK) + "`")
+
+    return chr(10).join(lines) + chr(10)
 
 def reset_ENGINE(chat_id, message=None):
     global ChatGPTbot
@@ -422,10 +602,33 @@ def delete_model_digit_tail(lst):
             else:
                 return "-".join(lst[:i + 1])
 
-def get_status(chatid = None, item = None):
-    if item == "PASS_HISTORY":
-        return "✅ " if int(Users.get_config(chatid, item)) > 2 else "☑️ "
-    return "✅ " if Users.get_config(chatid, item) else "☑️ "
+def get_status(chatid=None, item=None, lang=None):
+    enabled = bool(Users.get_config(chatid, item))
+    ui_lang = lang
+    if ui_lang is None:
+        ui_lang = _info_ui_lang(chatid)
+    if ui_lang in ("zh", "zh-hk", "Simplified Chinese", "Traditional Chinese"):
+        return "开" if enabled else "关"
+    if ui_lang in ("ja", "Japanese"):
+        return "オン" if enabled else "オフ"
+    return "ON" if enabled else "OFF"
+
+def _toggle_button_label(label, chatid, key, lang=None, suffix=""):
+    """Build toggle/select button text without emoji.
+    - Language menu: selected language shows a marker, others plain name
+    - Other menus: Name · ON/OFF (localized)
+    """
+    if "LANGUAGE" in str(suffix):
+        selected = bool(Users.get_config(chatid, key))
+        if not selected:
+            return label
+        ui = _info_ui_lang(chatid)
+        if ui in ("zh", "zh-hk"):
+            return f"{label}  ·  当前"
+        if ui in ("ja",):
+            return f"{label}  ·  選択中"
+        return f"{label}  ·  current"
+    return f"{label}  ·  {get_status(chatid, key, lang)}"
 
 def create_buttons(strings, plugins_status=False, lang="English", button_text=None, Suffix="", chatid=None):
     if plugins_status:
@@ -447,8 +650,8 @@ def create_buttons(strings, plugins_status=False, lang="English", button_text=No
 
     if not button_text:
         button_text = {k:{lang:k} for k in strings_array.keys()}
-    filtered_strings1 = {k:v for k, v in strings_array.items() if k in button_text and len(button_text[k][lang]) <= 14}
-    filtered_strings2 = {k:v for k, v in strings_array.items() if k in button_text and len(button_text[k][lang]) > 14}
+    filtered_strings1 = {k:v for k, v in strings_array.items() if k in button_text and len(button_text[k][lang]) <= (18 if plugins_status else 14)}
+    filtered_strings2 = {k:v for k, v in strings_array.items() if k in button_text and len(button_text[k][lang]) > (18 if plugins_status else 14)}
 
 
     buttons = []
@@ -456,7 +659,7 @@ def create_buttons(strings, plugins_status=False, lang="English", button_text=No
 
     for k, v in filtered_strings1.items():
         if plugins_status:
-            button = InlineKeyboardButton(f"{get_status(chatid, k)}{button_text[k][lang]}", callback_data=k + Suffix)
+            button = InlineKeyboardButton(_toggle_button_label(button_text[k][lang], chatid, k, lang, Suffix), callback_data=k + Suffix)
         else:
             button = InlineKeyboardButton(k, callback_data=v + Suffix)
         temp.append(button)
@@ -472,7 +675,7 @@ def create_buttons(strings, plugins_status=False, lang="English", button_text=No
 
     for k, v in filtered_strings2.items():
         if plugins_status:
-            button = InlineKeyboardButton(f"{get_status(chatid, k)}{button_text[k][lang]}", callback_data=k + Suffix)
+            button = InlineKeyboardButton(_toggle_button_label(button_text[k][lang], chatid, k, lang, Suffix), callback_data=k + Suffix)
         else:
             button = InlineKeyboardButton(k, callback_data=v + Suffix)
         buttons.append([button])

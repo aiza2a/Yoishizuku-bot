@@ -1,6 +1,20 @@
-__pycache__/
-.DS_Store
-.vscode
+# 运行时数据
+data/
 .env
-user_configs
-pyrightconfig.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.swo
+
+# 构建产物
+persona/systemprompt.md
+persona/systemprompt.working_draft.md
+persona/moduleization_diff.patch
+
+# IDE
+.idea/
+.vscode/
+*.swp
