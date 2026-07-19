@@ -162,6 +162,9 @@ MEMORY_SESSION_SUMMARY = {}
 ROLE_DATA_ROOT = _persona_os.environ.get("ROLE_DATA_ROOT", "/home/role_data")
 ROLE_DIALOGUES = RoleDialogueStore(ROLE_DATA_ROOT)
 
+# Rich Message 模式开关: 启用后使用 Bot API 10.0+ sendRichMessage / editMessageText(rich_message)
+RICH_MODE = _persona_os.environ.get("RICH_MESSAGE", "").lower() in ("1", "true", "yes")
+
 
 def role_owner_key(update, chatid, convo_id=None):
     # GetMesageInfo already includes the Telegram topic in convo_id. Keeping
@@ -589,6 +592,48 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     if "gemini" in model_name:
         Frequency_Modification = 1
 
+    # ── Rich/Plain 消息分发层(RICH_MODE 开关控制) ──
+    async def _edit_msg(text, msg_id=None, *, plain=False):
+        """编辑消息: Rich API(parse_mode=None) 或 MarkdownV2"""
+        mid = msg_id or answer_messageid
+        if RICH_MODE and not plain:
+            await context.bot.request.post("editMessageText", data={
+                "chat_id": chatid, "message_id": mid,
+                "rich_message": {"markdown": text},
+                "disable_web_page_preview": True,
+            })
+        else:
+            pm = None if plain else 'MarkdownV2'
+            await context.bot.edit_message_text(
+                chat_id=chatid, message_id=mid, text=text,
+                parse_mode=pm, disable_web_page_preview=True,
+                read_timeout=time_out, write_timeout=time_out,
+                pool_timeout=time_out, connect_timeout=time_out,
+            )
+
+    async def _send_final(text, *, draft=False, plain=False):
+        """定稿: Rich(sendRichMessage) 或 MarkdownV2(sendMessage)"""
+        if RICH_MODE and not plain:
+            return await context.bot.request.post("sendRichMessage", data={
+                "chat_id": chatid, "message_thread_id": message_thread_id,
+                "rich_message": {"markdown": text},
+                "disable_web_page_preview": True,
+            })
+        else:
+            pm = None if plain else 'MarkdownV2'
+            if draft:
+                return await context.bot.request.post("sendMessage", data={
+                    "chat_id": chatid, "message_thread_id": message_thread_id,
+                    "text": text, "parse_mode": pm,
+                    "disable_web_page_preview": True,
+                })
+            else:
+                return await context.bot.send_message(
+                    chat_id=chatid, message_thread_id=message_thread_id,
+                    text=text, parse_mode=pm,
+                    disable_web_page_preview=True,
+                )
+
 
     think_stop_event = None
     think_task = None
@@ -597,25 +642,38 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     if not await is_bot_blocked(context.bot, chatid):
         if is_private:
             try:
-                draft_resp = await context.bot.request.post("sendMessageDraft", data={
-                    "chat_id": chatid,
-                    "message_thread_id": message_thread_id,
-                    "text": escape(thinking_text(get_current_lang(config_convo_id), 0)),
-                    "parse_mode": "MarkdownV2",
-                    "reply_to_message_id": messageid,
-                })
+                if RICH_MODE:
+                    draft_resp = await context.bot.request.post("sendRichMessageDraft", data={
+                        "chat_id": chatid, "message_thread_id": message_thread_id,
+                        "rich_message": {"markdown": escape(thinking_text(get_current_lang(config_convo_id), 0))},
+                        "reply_to_message_id": messageid,
+                    })
+                else:
+                    draft_resp = await context.bot.request.post("sendMessageDraft", data={
+                        "chat_id": chatid, "message_thread_id": message_thread_id,
+                        "text": escape(thinking_text(get_current_lang(config_convo_id), 0)),
+                        "parse_mode": "MarkdownV2",
+                        "reply_to_message_id": messageid,
+                    })
                 answer_messageid = draft_resp["result"]["message_id"]
                 draft_active = True
             except Exception:
                 draft_active = False
         if not draft_active:
-            answer_messageid = (await context.bot.send_message(
-                chat_id=chatid,
-                message_thread_id=message_thread_id,
-                text=escape(thinking_text(get_current_lang(config_convo_id), 0)),
-                parse_mode='MarkdownV2',
-                reply_to_message_id=messageid,
-            )).message_id
+            think_text = escape(thinking_text(get_current_lang(config_convo_id), 0))
+            if RICH_MODE:
+                sent = await context.bot.request.post("sendMessage", data={
+                    "chat_id": chatid, "message_thread_id": message_thread_id,
+                    "text": think_text, "parse_mode": "MarkdownV2",
+                    "reply_to_message_id": messageid,
+                })
+                answer_messageid = sent["result"]["message_id"]
+            else:
+                answer_messageid = (await context.bot.send_message(
+                    chat_id=chatid, message_thread_id=message_thread_id,
+                    text=think_text, parse_mode='MarkdownV2',
+                    reply_to_message_id=messageid,
+                )).message_id
         think_stop_event = asyncio.Event()
         think_task = asyncio.create_task(
             animate_thinking(context, chatid, answer_messageid, config_convo_id, think_stop_event, message_thread_id)
@@ -770,30 +828,11 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                 title = ""
                 if lastresult != escape(send_split_message, italic=False):
                     try:
-                        await context.bot.edit_message_text(
-                            chat_id=chatid,
-                            message_id=answer_messageid,
-                            text=escape(send_split_message, italic=False),
-                            parse_mode='MarkdownV2',
-                            disable_web_page_preview=True,
-                            read_timeout=time_out,
-                            write_timeout=time_out,
-                            pool_timeout=time_out,
-                            connect_timeout=time_out
-                        )
+                        await _edit_msg(escape(send_split_message, italic=False))
                         lastresult = escape(send_split_message, italic=False)
                     except Exception as e:
                         if "parse entities" in str(e):
-                            await context.bot.edit_message_text(
-                                chat_id=chatid,
-                                message_id=answer_messageid,
-                                text=send_split_message,
-                                disable_web_page_preview=True,
-                                read_timeout=time_out,
-                                write_timeout=time_out,
-                                pool_timeout=time_out,
-                                connect_timeout=time_out
-                            )
+                            await _edit_msg(send_split_message, plain=True)
                             logger.warning("Telegram parse fallback used for split message; chars=%s", len(send_split_message))
                         else:
                             print("error:", str(e))
@@ -809,12 +848,9 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             now_result = escape(tmpresult, italic=False)
             if now_result and (modifytime % Frequency_Modification == 0 and lastresult != now_result) or "message_search_stage_" in data:
                 try:
-                    await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=now_result, parse_mode='MarkdownV2', disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
+                    await _edit_msg(now_result)
                     lastresult = now_result
                 except Exception as e:
-                    # print('\033[31m')
-                    # print("error: edit_message_text")
-                    # print('\033[0m')
                     continue
     except Exception as e:
         if think_stop_event is not None:
@@ -829,7 +865,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
         if api_key:
             robot.reset(convo_id=convo_id, system_prompt=systemprompt)
         if "parse entities" in str(e):
-            await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=tmpresult, disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
+            await _edit_msg(tmpresult)
         else:
             failure_text = "……刚才的回答在送出来时出了点问题。宵雫已经停下来整理了，请再说一次。"
             tmpresult = (str(tmpresult).strip() + "\n\n" + failure_text).strip()
@@ -867,30 +903,19 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
         elif now_result:
             try:
                 if draft_active:
-                    final_msg_resp = await context.bot.request.post("sendMessage", data={
-                        "chat_id": chatid,
-                        "message_thread_id": message_thread_id,
-                        "text": now_result,
-                        "parse_mode": "MarkdownV2",
-                        "disable_web_page_preview": True,
-                    })
+                    final_msg_resp = await _send_final(now_result, draft=True)
                     draft_active = False
                     try:
                         await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
                     except Exception:
                         pass
                 else:
-                    await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=now_result, parse_mode='MarkdownV2', disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
+                    await _edit_msg(now_result)
             except Exception as e:
                 if "parse entities" in str(e):
                     if draft_active:
                         try:
-                            await context.bot.request.post("sendMessage", data={
-                                "chat_id": chatid,
-                                "message_thread_id": message_thread_id,
-                                "text": tmpresult,
-                                "disable_web_page_preview": True,
-                            })
+                            await _send_final(tmpresult, draft=True, plain=True)
                             draft_active = False
                             try:
                                 await context.bot.delete_message(chat_id=chatid, message_id=answer_messageid)
@@ -899,7 +924,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                         except Exception:
                             pass
                     else:
-                        await context.bot.edit_message_text(chat_id=chatid, message_id=answer_messageid, text=tmpresult, disable_web_page_preview=True, read_timeout=time_out, write_timeout=time_out, pool_timeout=time_out, connect_timeout=time_out)
+                        await _edit_msg(tmpresult, plain=True)
 
     # Persist completed dialogue so it survives container/VPS restarts.
     if str(message or "").strip() and str(tmpresult or "").strip():
