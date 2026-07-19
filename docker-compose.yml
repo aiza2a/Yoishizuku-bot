@@ -1,7 +1,9 @@
 services:
   chatgptbot:
     container_name: Yoishizuku-bot
-    image: yym68686/chatgpt@sha256:802678fc950c5769f7c714a505c04b63fdd34b842a39bfd41a2ba60026427647
+    # ── 自定义镜像（GitHub Actions 自动构建） ──
+    # 改用 `yym68686/chatgpt@sha256:...` 以使用上游基础镜像+卷挂载覆写
+    image: ghcr.io/aiza2a/yoishizuku-bot:latest
     user: "10001:10001"
     env_file:
       - ./.env
@@ -13,27 +15,29 @@ services:
       TZ: Asia/Shanghai
       PORT: ${PORT:-8080}
     volumes:
+      # ── 持久化数据（必需） ──
       - ./data/user_configs:/home/user_configs
-      - ./app/config.py:/home/config.py:ro
-      - ./app/bot.py:/home/bot.py:ro
-      - ./persona/persona.env:/home/persona.env:ro
-      - ./persona/systemprompt.md:/home/persona_systemprompt.md:ro
-      - ./app/overrides/memory_store.py:/home/memory_store.py:ro
-      - ./app/overrides/role_dialogue_store.py:/home/role_dialogue_store.py:ro
       - ./data/memory:/home/memory_data
       - ./data/roles:/home/role_data
       - ./data/access:/home/access_data
-      - ./persona/bot_description.txt:/home/persona_bot_description.txt:ro
-      - ./persona/start_message.txt:/home/persona_start_message.txt:ro
-      - ./app/overrides/i18n_override.py:/home/i18n_override.py:ro
-      - ./app/overrides/access_control.py:/home/access_control.py:ro
-      - ./app/overrides/aient_base.py:/home/aient/aient/models/base.py:ro
-      - ./app/overrides/aient_chatgpt.py:/home/aient/aient/models/chatgpt.py:ro
-      - ./app/overrides/aient_utils_scripts.py:/home/aient/aient/utils/scripts.py:ro
-      - ./app/overrides/decorators_override.py:/home/utils/decorators.py:ro
-      - ./app/overrides/bot_utils_scripts.py:/home/utils/scripts.py:ro
-      - ./app/overrides/aient_run_python.py:/home/aient/aient/plugins/run_python.py:ro
-      - ./scripts/healthcheck.py:/home/scripts/healthcheck.py:ro
+      # ── 可选覆写：本地文件会覆盖镜像内置版本，免重建调试用 ──
+      # - ./app/bot.py:/home/bot.py:ro
+      # - ./app/config.py:/home/config.py:ro
+      # - ./app/overrides/memory_store.py:/home/memory_store.py:ro
+      # - ./app/overrides/role_dialogue_store.py:/home/role_dialogue_store.py:ro
+      # - ./app/overrides/access_control.py:/home/access_control.py:ro
+      # - ./app/overrides/i18n_override.py:/home/i18n_override.py:ro
+      # - ./app/overrides/decorators_override.py:/home/utils/decorators.py:ro
+      # - ./app/overrides/bot_utils_scripts.py:/home/utils/scripts.py:ro
+      # - ./app/overrides/aient_base.py:/home/aient/aient/models/base.py:ro
+      # - ./app/overrides/aient_chatgpt.py:/home/aient/aient/models/chatgpt.py:ro
+      # - ./app/overrides/aient_utils_scripts.py:/home/aient/aient/utils/scripts.py:ro
+      # - ./app/overrides/aient_run_python.py:/home/aient/aient/plugins/run_python.py:ro
+      # - ./persona/persona.env:/home/persona.env:ro
+      # - ./persona/systemprompt.md:/home/persona_systemprompt.md:ro
+      # - ./persona/start_message.txt:/home/persona_start_message.txt:ro
+      # - ./persona/bot_description.txt:/home/persona_bot_description.txt:ro
+      # - ./scripts/healthcheck.py:/home/scripts/healthcheck.py:ro
     restart: unless-stopped
     init: true
     read_only: true
