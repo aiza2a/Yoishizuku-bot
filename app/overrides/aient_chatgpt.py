@@ -871,12 +871,17 @@ class chatgpt(BaseLLM):
                     generator = _mock_response_generator()
                 else:
                     if _messages_have_tool_roles(tmp_post_json.get('messages')):
-                        # Provider compatibility: rewrite tool transcript to plain chat.
+                        # Provider compatibility: rewrite old tool transcripts as plain chat.
+                        # Keep the schema for a new user request; otherwise a tool used in an
+                        # earlier turn would disable every later tool call in the conversation.
                         tmp_post_json = copy.deepcopy(tmp_post_json)
                         tmp_post_json['messages'] = _convert_tool_messages_for_upstream(tmp_post_json.get('messages'))
-                        # Avoid re-sending tools schema on rewritten follow-up for stricter providers.
-                        tmp_post_json.pop('tools', None)
-                        tmp_post_json.pop('tool_choice', None)
+                        if role == "tool":
+                            # The immediate post-tool follow-up is plain chat for providers
+                            # that reject tool-role transcripts. A later user turn regains
+                            # the schema above and can invoke a new tool.
+                            tmp_post_json.pop('tools', None)
+                            tmp_post_json.pop('tool_choice', None)
                         if self.print_log:
                             self.logger.info('Rewrote tool messages for upstream compatibility')
                     if request_stream:
