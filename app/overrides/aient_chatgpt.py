@@ -719,6 +719,7 @@ class chatgpt(BaseLLM):
 
             # 处理所有工具调用
             all_responses = UserMessage()
+            successful_tool_names = []
 
             for tool_info in tool_calls:
                 tool_name = tool_info['function_name']
@@ -740,6 +741,7 @@ class chatgpt(BaseLLM):
                             yield chunk
                 final_tool_response = tool_response
                 if "<tool_error>" not in tool_response:
+                    successful_tool_names.append(tool_name)
                     if tool_name == "read_file":
                         self.conversation[convo_id].provider("files").update(tool_info['parameter']["file_path"], tool_response, head=safe_get(tool_info, 'parameter', "head", default=None))
                         final_tool_response = "Read file successfully! The file content has been updated in the tag <latest_file_content>."
@@ -772,6 +774,11 @@ class chatgpt(BaseLLM):
             function_call_id = tool_calls[0].get('function_call_id', function_call_name + "_tool_call")
 
             response_role = "tool"
+
+            # The Telegram layer renders this internal event as a short,
+            # persona-aware hand-off while the follow-up answer is generated.
+            if successful_tool_names:
+                yield f"message_tool_complete:{successful_tool_names[0]}"
 
             # 递归处理函数调用响应
             if is_async:

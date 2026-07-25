@@ -442,6 +442,72 @@ def running_text(stage_text, frame=0):
     return f"`{stage} {status_spinner(frame)}`"
 
 
+_SEARCH_STATUS_VARIANTS = {
+    "message_search_stage_1": {
+        "zh": ("我先替你把问题拆开看看", "关键词我慢慢理出来", "先从最接近的线索找起"),
+        "zh-hk": ("我先替你把問題拆開看看", "關鍵詞我慢慢理出來", "先從最接近的線索找起"),
+    },
+    "message_search_stage_2": {
+        "zh": ("来源有些杂，我替你挑可信的", "我先把不可靠的内容放开", "再核对一下出处，别急"),
+        "zh-hk": ("來源有些雜，我替你挑可信的", "我先把不可靠的內容放開", "再核對一下出處，別急"),
+    },
+    "message_search_stage_3": {
+        "zh": ("资料找到了，我再替你读仔细些", "这几处内容我正在对照", "原文还在读，马上就好"),
+        "zh-hk": ("資料找到了，我再替你讀仔細些", "這幾處內容我正在對照", "原文還在讀，馬上就好"),
+    },
+    "message_search_stage_4": {
+        "zh": ("能确认的部分我正在整理", "我把出处和内容放在一起", "再收一下尾，就拿给你"),
+        "zh-hk": ("能確認的部分我正在整理", "我把出處和內容放在一起", "再收一下尾，就拿給你"),
+    },
+}
+
+_SEARCH_STAGE_ORDER = {
+    "message_search_stage_1": 1,
+    "message_search_stage_2": 2,
+    "message_search_stage_3": 3,
+    "message_search_stage_4": 4,
+}
+
+
+def search_running_text(stage_key, lang_code, frame=0):
+    """Render a deterministic, persona-aware search progress state."""
+    ui = _ui_lang_name(lang_code)
+    variants = _SEARCH_STATUS_VARIANTS.get(stage_key, {}).get(ui)
+    if variants:
+        # Change wording every 1.28 seconds; spinner still advances every frame.
+        stage = variants[(int(frame) // 8) % len(variants)]
+    else:
+        stage = strings.get(stage_key, {}).get(lang_code, stage_key)
+    order = _SEARCH_STAGE_ORDER.get(stage_key)
+    if order:
+        label = "检索" if ui == "zh" else "檢索" if ui == "zh-hk" else "Search"
+        stage = f"〔{label} {order}/4〕 {stage}"
+    return running_text(stage, frame)
+
+
+def tool_completion_running_text(tool_name, lang_code, frame=0):
+    """Show a brief fixed hand-off after a real tool result arrives."""
+    ui = _ui_lang_name(lang_code)
+    messages = {
+        "zh": {
+            "get_time": "时间确认好了，我告诉你…",
+            "get_search_results": "资料核对好了，我整理给你…",
+            "get_url_content": "内容读完了，我把重点整理给你…",
+            "generate_image": "图像准备好了，我拿给你…",
+        },
+        "zh-hk": {
+            "get_time": "時間確認好了，我告訴你…",
+            "get_search_results": "資料核對好了，我整理給你…",
+            "get_url_content": "內容讀完了，我把重點整理給你…",
+            "generate_image": "圖像準備好了，我拿給你…",
+        },
+    }
+    stage = messages.get(ui, {}).get(tool_name)
+    if not stage:
+        stage = "处理好了，我整理给你…" if ui == "zh" else "處理好了，我整理給你…" if ui == "zh-hk" else "It is ready. Let me put it together…"
+    return running_text(f"〔已核对〕 {stage}", frame)
+
+
 async def animate_status(context, chatid, message_id, convo_id, stop_event, text_provider, interval=0.16):
     """Edit one message repeatedly to show live status animation."""
     import asyncio as _asyncio
@@ -674,6 +740,42 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                 "text": text or "…",
                 "parse_mode": "MarkdownV2",
             })
+    async def _start_status_animation(initial_text, text_provider):
+        """Replace the placeholder with a real tool status until text arrives."""
+        nonlocal think_stop_event, think_task, lastresult
+        try:
+            if think_stop_event is not None and not think_stop_event.is_set():
+                think_stop_event.set()
+                if think_task is not None:
+                    think_task.cancel()
+        except Exception:
+            pass
+        if draft_active:
+            try:
+                rendered = escape(initial_text)
+                await _update_draft(rendered)
+                lastresult = rendered
+            except Exception as exc:
+                logger.debug("Draft 工具状态更新跳过：%s", exc)
+        elif answer_messageid:
+            try:
+                rendered = escape(initial_text)
+                await _edit_msg(rendered)
+                lastresult = rendered
+            except Exception as exc:
+                logger.debug("工具状态初始更新跳过：%s", exc)
+            think_stop_event = asyncio.Event()
+            think_task = asyncio.create_task(
+                animate_status(
+                    context,
+                    chatid,
+                    answer_messageid,
+                    convo_id,
+                    think_stop_event,
+                    text_provider=text_provider,
+                    interval=0.16,
+                )
+            )
 
 
     think_stop_event = None
@@ -733,14 +835,31 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     except Exception:
                         pass
                 return
-            if "message_search_stage_" not in data:
-                if think_stop_event is not None and not think_stop_event.is_set():
-                    think_stop_event.set()
-                    try:
-                        think_task.cancel()
-                    except Exception:
-                        pass
-                result = result + data
+            is_search_stage = isinstance(data, str) and data.startswith("message_search_stage_")
+            is_tool_complete = isinstance(data, str) and data.startswith("message_tool_complete:")
+            if is_search_stage:
+                stage_lang = get_current_lang(config_convo_id)
+                await _start_status_animation(
+                    search_running_text(data, stage_lang, 0),
+                    text_provider=lambda frame, key=data, lang=stage_lang: search_running_text(key, lang, frame),
+                )
+                continue
+            if is_tool_complete:
+                tool_name = data.partition(":")[2]
+                stage_lang = get_current_lang(config_convo_id)
+                await _start_status_animation(
+                    tool_completion_running_text(tool_name, stage_lang, 0),
+                    text_provider=lambda frame, name=tool_name, lang=stage_lang: tool_completion_running_text(name, lang, frame),
+                )
+                continue
+
+            if think_stop_event is not None and not think_stop_event.is_set():
+                think_stop_event.set()
+                try:
+                    think_task.cancel()
+                except Exception:
+                    pass
+            result = result + data
             image_match = re.search(r"!\[image\]\(data:image\/png;base64,([a-zA-Z0-9+/=]+)\)", result)
             if image_match and image_has_send == 0:
                 base64_str = image_match.group(1)
@@ -769,40 +888,6 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             if sum([line.strip().startswith("```") for line in result.split('\n')]) % 2 != 0:
                 tmpresult = tmpresult + "\n```"
             tmpresult = title + tmpresult
-            if "message_search_stage_" in data:
-                # Keep a live running animation for tool/search stages.
-                stage_label = strings[data][get_current_lang(config_convo_id)]
-                tmpresult = running_text(stage_label, 0)
-                # Restart/reuse status animation with stage text provider.
-                try:
-                    if think_stop_event is not None and not think_stop_event.is_set():
-                        think_stop_event.set()
-                        if think_task is not None:
-                            think_task.cancel()
-                except Exception:
-                    pass
-                # Draft 没有普通 message_id，不能启动 editMessageText 状态动画。
-                if draft_active:
-                    try:
-                        await _update_draft(escape(tmpresult))
-                        lastresult = escape(tmpresult)
-                    except Exception as exc:
-                        logger.debug("Draft 阶段更新跳过：%s", exc)
-                elif answer_messageid:
-                    think_stop_event = asyncio.Event()
-                    stage_lang = get_current_lang(config_convo_id)
-                    stage_base = strings[data][stage_lang]
-                    think_task = asyncio.create_task(
-                        animate_status(
-                            context,
-                            chatid,
-                            answer_messageid,
-                            convo_id,
-                            think_stop_event,
-                            text_provider=lambda frame, base=stage_base: running_text(base, frame),
-                            interval=0.16,
-                        )
-                    )
             history = robot.conversation[convo_id]
             if safe_get(history, -2, "tool_calls", 0, 'function', 'name') == "generate_image" and not image_has_send and safe_get(history, -1, 'content'):
                 image_result = history[-1]['content'].split('\n\n')[1]
@@ -904,7 +989,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                 )).message_id
 
             now_result = escape(tmpresult, italic=False)
-            if now_result and (modifytime % Frequency_Modification == 0 and lastresult != now_result) or "message_search_stage_" in data:
+            if now_result and modifytime % Frequency_Modification == 0 and lastresult != now_result:
                 try:
                     if draft_active:
                         await _update_draft(now_result)
