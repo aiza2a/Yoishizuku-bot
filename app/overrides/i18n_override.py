@@ -163,36 +163,6 @@ strings["model_changed"] = {
     "ru": "Model changed to: `{model_name}`",
 }
 
-# ---------- search stages (no emoji) ----------
-strings["message_search_stage_1"] = {
-    "zh": "正在搜索问题，提取关键词...",
-    "en": "Searching and extracting keywords...",
-    "zh-hk": "正在搜索問題，提取關鍵詞...",
-    "ja": "検索キーワードを抽出中...",
-    "ru": "Searching and extracting keywords...",
-}
-strings["message_search_stage_2"] = {
-    "zh": "正在筛选相关信息源...",
-    "en": "Selecting relevant sources...",
-    "zh-hk": "正在篩選相關信息源...",
-    "ja": "関連ソースを選別中...",
-    "ru": "Selecting relevant sources...",
-}
-strings["message_search_stage_3"] = {
-    "zh": "已找到链接，正在获取详情...",
-    "en": "Fetching detailed content...",
-    "zh-hk": "已找到鏈接，正在獲取詳情...",
-    "ja": "詳細内容を取得中...",
-    "ru": "Fetching detailed content...",
-}
-strings["message_search_stage_4"] = {
-    "zh": "正在整理搜索结果...",
-    "en": "Organizing search results...",
-    "zh-hk": "正在整理搜索結果...",
-    "ja": "検索結果を整理中...",
-    "ru": "Organizing search results...",
-}
-
 # ---------- 宵雫风格的命令执行提示（不改信息页和命令菜单） ----------
 strings["message_ban"] = {
     "zh": "……抱歉，这里暂时只为被允许的人开放。",
@@ -274,15 +244,17 @@ strings["message_api_error"] = {
     "ja": "接続できませんでした。主人に設定を確認してもらってから、もう一度試してください。",
     "ru": "The connection did not succeed. Please ask my master to check the credentials and address, then try again.",
 }
+
+# ---------- 宵雫风格的搜索阶段提示（程序状态，不由模型生成） ----------
 strings["message_search_stage_1"] = {
-    "zh": "宵雫正在找最合适的线索...", "en": "I'm looking for the most useful clues...", "zh-hk": "宵雫正在找最合適的線索...", "ja": "役に立つ手がかりを探しています...", "ru": "I'm looking for the most useful clues...",
+    "zh": "我先替你整理一下检索关键词…", "en": "I'm looking for the most useful clues...", "zh-hk": "我先替你整理一下檢索關鍵詞…", "ja": "役に立つ手がかりを探しています...", "ru": "I'm looking for the most useful clues...",
 }
 strings["message_search_stage_2"] = {
-    "zh": "找到一些方向了，正在挑选可靠的内容...", "en": "I found a few leads and am choosing the reliable ones...", "zh-hk": "找到一些方向了，正在挑選可靠的內容...", "ja": "いくつか見つかりました。信頼できる内容を選んでいます...", "ru": "I found a few leads and am choosing the reliable ones...",
+    "zh": "我在挑可信的来源，稍等一下…", "en": "I found a few leads and am choosing the reliable ones...", "zh-hk": "我在挑可信的來源，稍等一下…", "ja": "いくつか見つかりました。信頼できる内容を選んでいます...", "ru": "I found a few leads and am choosing the reliable ones...",
 }
 strings["message_search_stage_3"] = {
-    "zh": "线索已经找到了，宵雫再仔细看看...", "en": "I found the sources. Let me read them carefully...", "zh-hk": "線索已經找到了，宵雫再仔細看看...", "ja": "情報が見つかりました。もう少し丁寧に確認します...", "ru": "I found the sources. Let me read them carefully...",
+    "zh": "资料找到了，我再替你核对一遍…", "en": "I found the sources. Let me read them carefully...", "zh-hk": "資料找到了，我再替你核對一遍…", "ja": "情報が見つかりました。もう少し丁寧に確認します...", "ru": "I found the sources. Let me read them carefully...",
 }
 strings["message_search_stage_4"] = {
-    "zh": "快整理好了，再等宵雫一下...", "en": "It's almost ready. Give me one more moment...", "zh-hk": "快整理好了，再等宵雫一下...", "ja": "もうすぐまとまります。あと少しだけ待ってください...", "ru": "It's almost ready. Give me one more moment...",
+    "zh": "快整理好了，我把结果拿给你…", "en": "It's almost ready. Give me one more moment...", "zh-hk": "快整理好了，我把結果拿給你…", "ja": "もうすぐまとまります。あと少しだけ待ってください...", "ru": "It's almost ready. Give me one more moment...",
 }
