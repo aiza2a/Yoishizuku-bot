@@ -7,6 +7,8 @@ FROM $BASE_IMAGE
 # ── 1. Inject core entrypoints ──
 COPY app/bot.py       /home/bot.py
 COPY app/config.py    /home/config.py
+COPY app/tool_policy.py /home/tool_policy.py
+COPY app/tool_request.py /home/tool_request.py
 
 # ── 2. Inject overrides (match upstream Python import paths) ──
 # Each file replaces the corresponding upstream file at its exact path

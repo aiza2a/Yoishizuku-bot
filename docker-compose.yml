@@ -23,6 +23,8 @@ services:
       # ── 可选覆写：本地文件会覆盖镜像内置版本，免重建调试用 ──
       # - ./app/bot.py:/home/bot.py:ro
       # - ./app/config.py:/home/config.py:ro
+      # - ./app/tool_policy.py:/home/tool_policy.py:ro
+      # - ./app/tool_request.py:/home/tool_request.py:ro
       # - ./app/overrides/memory_store.py:/home/memory_store.py:ro
       # - ./app/overrides/role_dialogue_store.py:/home/role_dialogue_store.py:ro
       # - ./app/overrides/access_control.py:/home/access_control.py:ro

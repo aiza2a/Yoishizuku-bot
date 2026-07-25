@@ -15,7 +15,16 @@ from pathlib import Path
 
 from aient.aient.utils import prompt
 from aient.aient.core.utils import update_initial_model, BaseAPI
-from aient.aient.models import chatgpt, PLUGINS, whisper
+from aient.aient.models import chatgpt, PLUGINS as AIENT_PLUGINS, whisper
+
+try:
+    from app.tool_policy import filter_plugins
+except ImportError:
+    from tool_policy import filter_plugins
+
+# The upstream image registers every bundled tool. Keep only the locally
+# allowed subset so hidden tools are neither offered nor sent to providers.
+PLUGINS = filter_plugins(AIENT_PLUGINS)
 
 from telegram import InlineKeyboardButton
 

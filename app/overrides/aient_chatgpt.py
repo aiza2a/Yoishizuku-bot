@@ -13,9 +13,17 @@ from .base import BaseLLM
 from ..plugins.registry import registry
 from ..plugins import PLUGINS, get_tools_result_async, function_call_list, update_tools_config
 from ..utils.scripts import safe_get, async_generator_to_sync, parse_function_xml, parse_continuous_json, convert_functions_to_xml, remove_xml_tags_and_content
-from ..core.request import prepare_request_payload
+try:
+    from tool_request import prepare_request_payload
+except ImportError:
+    from app.tool_request import prepare_request_payload
 from ..core.response import fetch_response_stream, fetch_response
 from ..architext.architext import Messages, SystemMessage, UserMessage, AssistantMessage, ToolCalls, ToolResults, Texts, RoleMessage, Images, Files
+
+try:
+    from tool_policy import filter_plugins, model_requires_nonstream_tools, tools_enabled_for
+except ImportError:
+    from app.tool_policy import filter_plugins, model_requires_nonstream_tools, tools_enabled_for
 
 class ToolResult(Texts):
     def __init__(self, tool_name: str, tool_args: str, tool_response: str, name: Optional[str] = None, visible: bool = True, newline: bool = True):
@@ -243,6 +251,12 @@ class chatgpt(BaseLLM):
         self.function_call_list = copy.deepcopy(function_call_list)
         # 如果有新工具，需要注册到registry并更新配置
         self.plugins, self.function_call_list, _ = update_tools_config()
+        self.plugins = filter_plugins(self.plugins)
+        self.function_call_list = {
+            name: schema
+            for name, schema in self.function_call_list.items()
+            if name in self.plugins
+        }
 
         if isinstance(tools, list):
             self.tools = tools if tools else []
@@ -363,13 +377,21 @@ class chatgpt(BaseLLM):
         stream: bool = True,
         **kwargs,
     ):
-        # 构造 provider 信息
+        # Construct provider capability information.
+        if kwargs.get("plugins", None) is not None:
+            self.plugins = filter_plugins(kwargs["plugins"])
+
+        plugins_status = filter_plugins(kwargs.get("plugins", self.plugins))
+        tools_enabled = tools_enabled_for(model or self.engine, plugins_status, self.use_plugins)
+        request_stream = stream and not (
+            tools_enabled and model_requires_nonstream_tools(model or self.engine)
+        )
         provider = {
             "provider": "openai",
             "base_url": kwargs.get('api_url', self.api_url.chat_url),
             "api": kwargs.get('api_key', self.api_key),
             "model": [model or self.engine],
-            "tools": True if self.use_plugins else False,
+            "tools": tools_enabled,
             "image": True
         }
 
@@ -386,10 +408,10 @@ class chatgpt(BaseLLM):
                 SystemMessage(self.system_prompt, self.conversation[convo_id].provider("files")),
                 UserMessage(prompt)
             ).render(),
-            "stream": stream,
+            "stream": request_stream,
             "temperature": kwargs.get("temperature", self.temperature)
         }
-        if stream:
+        if request_stream:
             request_data["stream_options"] = {
                 "include_usage": True
             }
@@ -397,12 +419,9 @@ class chatgpt(BaseLLM):
         if kwargs.get("max_tokens", self.max_tokens):
             request_data["max_tokens"] = kwargs.get("max_tokens", self.max_tokens)
 
-        # 添加工具相关信息
-        if kwargs.get("plugins", None):
-            self.plugins = kwargs.get("plugins")
-
-        plugins_status = kwargs.get("plugins", self.plugins)
-        if not (all(value == False for value in plugins_status.values()) or self.use_plugins == False):
+        # Attach tool schemas only when both the selected model and the
+        # current chat configuration permit tool calling.
+        if tools_enabled:
             tools_request_body = []
             for item in plugins_status.keys():
                 try:
@@ -460,22 +479,34 @@ class chatgpt(BaseLLM):
                 line = line.lstrip("data: ")
                 if line == "[DONE]":
                     return "DONE"
-            elif isinstance(line, (dict, list)):
-                if isinstance(line, dict) and safe_get(line, "choices", 0, "message", "content"):
-                    full_response = line["choices"][0]["message"]["content"]
-                    total_tokens = safe_get(line, "usage", "total_tokens", default=0)
-                    return full_response
+            elif isinstance(line, dict):
+                # Non-stream Chat Completions responses use choices[].message,
+                # while SSE chunks use choices[].delta. Normalize the former
+                # so tool_calls follow the same parsing path as streamed calls.
+                message = safe_get(line, "choices", 0, "message", default=None)
+                if isinstance(message, dict):
+                    if safe_get(message, "content"):
+                        full_response = message["content"]
+                        total_tokens = safe_get(line, "usage", "total_tokens", default=0)
+                        return full_response
+                    line = copy.deepcopy(line)
+                    line["choices"][0]["delta"] = message
                 else:
                     return str(line)
+            elif isinstance(line, list):
+                return str(line)
             else:
                 try:
                     if isinstance(line, str):
                         line = json.loads(line)
-                        if safe_get(line, "choices", 0, "message", "content"):
-                            full_response = line["choices"][0]["message"]["content"]
-                            return full_response
-                        else:
-                            return str(line)
+                        message = safe_get(line, "choices", 0, "message", default=None)
+                        if isinstance(message, dict):
+                            if safe_get(message, "content"):
+                                full_response = message["content"]
+                                total_tokens = safe_get(line, "usage", "total_tokens", default=0)
+                                return full_response
+                            line = copy.deepcopy(line)
+                            line["choices"][0]["delta"] = message
                 except:
                     self.logger.error(f"json.loads error: {repr(line)}")
                     return None
@@ -544,8 +575,10 @@ class chatgpt(BaseLLM):
             response_role = "assistant"
 
         missing_required_params = []
+        plugins_status = filter_plugins(kwargs.get("plugins", self.plugins))
+        tools_enabled = tools_enabled_for(model or self.engine, plugins_status, self.use_plugins)
 
-        if self.use_plugins == True:
+        if tools_enabled:
             if self.check_done:
                 # self.logger.info(f"worker Response: {full_response}")
                 if not full_response.strip().endswith('[done]'):
@@ -619,7 +652,7 @@ class chatgpt(BaseLLM):
                     full_response = ""
 
         # 处理函数调用
-        if need_function_call and self.use_plugins == True:
+        if need_function_call and tools_enabled:
             if self.print_log:
                 if function_parameter:
                     self.logger.info(f"function_parameter: {function_parameter}")
@@ -795,6 +828,7 @@ class chatgpt(BaseLLM):
 
         # 获取请求体
         url, headers, json_post, engine_type = await self.get_post_body(prompt, role, convo_id, model, pass_history, stream=stream, **kwargs)
+        request_stream = bool(json_post.get("stream", stream))
         self.truncate_conversation(convo_id=convo_id)
 
         # 打印日志
@@ -845,7 +879,7 @@ class chatgpt(BaseLLM):
                         tmp_post_json.pop('tool_choice', None)
                         if self.print_log:
                             self.logger.info('Rewrote tool messages for upstream compatibility')
-                    if stream:
+                    if request_stream:
                         generator = fetch_response_stream(
                             self.aclient, url, headers, tmp_post_json, engine_type, model or self.engine,
                         )
@@ -860,7 +894,7 @@ class chatgpt(BaseLLM):
                     generator, convo_id=convo_id, function_name=function_name,
                     total_tokens=total_tokens, function_arguments=function_arguments,
                     function_call_id=function_call_id, model=model, language=language,
-                    system_prompt=system_prompt, pass_history=pass_history, is_async=True, stream=stream, **kwargs
+                    system_prompt=system_prompt, pass_history=pass_history, is_async=True, stream=request_stream, **kwargs
                 ):
                     if index == 0:
                         if "HTTP Error', 'status_code': 524" in processed_chunk:
