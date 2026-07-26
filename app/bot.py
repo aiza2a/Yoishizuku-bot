@@ -2084,7 +2084,7 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     logger.warning("Guest 收到召唤：caller=%s chat=%s query=%s text=%r", caller_id, chatid, guest_query_id[:12], text[:80])
 
     # Guest 首次应答建立一个可编辑的 inline 消息；结果只会在原调用聊天中出现。
-    initial = "`宵雫思索中 ▪︎□□`"
+    initial = waiting_text(language, 0)
     try:
         sent = await context.bot._post("answerGuestQuery", data={
             "guest_query_id": guest_query_id,
@@ -2103,6 +2103,44 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     result = ""
     generated_image = ""
+    # Guest replies are inline messages; keep a slow status animation running so
+    # a long tool call (image generation can exceed three minutes) never looks
+    # frozen. Telegram throttles inline edits harder than normal messages, so
+    # the cadence here is deliberately slower than the private-chat animation.
+    guest_status_stop = asyncio.Event()
+    guest_status_lang = language
+    guest_status_provider = {"fn": lambda frame: waiting_text(guest_status_lang, frame)}
+
+    async def _animate_guest():
+        frame = 0
+        last = None
+        while not guest_status_stop.is_set():
+            try:
+                await asyncio.sleep(6.0)
+            except Exception:
+                return
+            if guest_status_stop.is_set():
+                return
+            frame += 1
+            try:
+                content = guest_status_provider["fn"](frame)
+                if content and content != last:
+                    await context.bot.edit_message_text(
+                        text=escape(content),
+                        inline_message_id=inline_message_id,
+                        parse_mode="MarkdownV2",
+                        disable_web_page_preview=True,
+                    )
+                    last = content
+            except RetryAfter as exc:
+                try:
+                    await asyncio.sleep(float(exc.retry_after) + 0.5)
+                except Exception:
+                    return
+            except Exception:
+                pass
+
+    guest_status_task = asyncio.create_task(_animate_guest())
 
     async def _edit_guest(text, *, plain=False, preview=False):
         """Guest queries permit sparse inline edits; use one final update."""
@@ -2143,19 +2181,32 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 # Telegram render its link preview instead.
                 generated_image = chunk.partition(":")[2]
                 continue
-            if isinstance(chunk, str) and (
-                chunk.startswith("message_search_stage_")
-                or chunk.startswith("message_tool_running:")
-                or chunk.startswith("message_tool_complete:")
-            ):
+            if isinstance(chunk, str) and chunk.startswith("message_tool_running:"):
+                running_tool = chunk.partition(":")[2]
+                guest_status_provider["fn"] = (
+                    lambda frame, name=running_tool, lang=guest_status_lang: tool_running_text(name, lang, frame)
+                )
+                continue
+            if isinstance(chunk, str) and chunk.startswith("message_search_stage_"):
+                guest_status_provider["fn"] = (
+                    lambda frame, key=chunk, lang=guest_status_lang: search_running_text(key, lang, frame)
+                )
+                continue
+            if isinstance(chunk, str) and chunk.startswith("message_tool_complete:"):
+                done_tool = chunk.partition(":")[2]
+                guest_status_provider["fn"] = (
+                    lambda frame, name=done_tool, lang=guest_status_lang: tool_completion_running_text(name, lang, frame)
+                )
                 continue
             if chunk == "message_tool_discard_preamble":
                 result = ""
                 continue
             result += chunk
-        # Guest inline messages are heavily rate-limited by Telegram. Keeping
-        # the initial status until generation ends avoids a half-sentence
-        # followed by a long RetryAfter pause.
+        # Guest inline messages are heavily rate-limited by Telegram. The status
+        # animation must stop before the final edit, otherwise it would overwrite
+        # the answer moments later.
+        guest_status_stop.set()
+        guest_status_task.cancel()
         body = result or "……这次没有收到可以回答的内容。"
         show_preview = False
         final = escape(body, italic=False)
@@ -2173,6 +2224,10 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as exc:
         logger.exception("Guest 推理失败：%s", exc)
         await _edit_guest("……刚才的回答出了问题，请再试一次。", plain=True)
+    finally:
+        # Always tear the animation down, including on early return or error.
+        guest_status_stop.set()
+        guest_status_task.cancel()
 
 
 def _global_config_change_permitted(update):
