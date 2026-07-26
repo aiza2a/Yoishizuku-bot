@@ -47,6 +47,7 @@ checks = {
     "image_model_callback_registered": '_IMAGEMODELS' in bot,
     "image_plugin_reads_panel_choice": "config.get_image_engine(None)" in (ROOT / "app" / "overrides" / "aient_image.py").read_text(encoding="utf-8"),
     "search_prompt_keeps_persona": "do not switch" in (ROOT / "app" / "overrides" / "aient_plugins_config.py").read_text(encoding="utf-8"),
+    "rich_mode_has_fallback": bot.count("回退 MarkdownV2") >= 2 and "回退普通 Draft" in bot,
     "rich_mode_avoids_markdownv2_escape": "def _rich_markdown" in bot and 'rich_message": {"markdown": escape(' not in bot,
     "stream_updates_honour_retry_after": "stream_retry_until" in bot,
     "tool_running_animation": "message_tool_running:" in bot,

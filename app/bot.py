@@ -651,12 +651,24 @@ async def animate_status(context, chatid, message_id, convo_id, stop_event, text
             content = text_provider(frame)
             if content and content != last_text:
                 if RICH_MODE:
-                    await context.bot._post("editMessageText", data={
-                        "chat_id": chatid,
-                        "message_id": message_id,
-                        "rich_message": {"markdown": _rich_markdown(content)},
-                        "disable_web_page_preview": True,
-                    })
+                    try:
+                        await context.bot._post("editMessageText", data={
+                            "chat_id": chatid,
+                            "message_id": message_id,
+                            "rich_message": {"markdown": _rich_markdown(content)},
+                            "disable_web_page_preview": True,
+                        })
+                    except RetryAfter:
+                        raise
+                    except Exception:
+                        # Keep the animation alive on Rich Message errors.
+                        await context.bot.edit_message_text(
+                            chat_id=chatid,
+                            message_id=message_id,
+                            text=escape(content),
+                            parse_mode="MarkdownV2",
+                            disable_web_page_preview=True,
+                        )
                 else:
                     await context.bot.edit_message_text(
                         chat_id=chatid,
@@ -821,35 +833,47 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
         """编辑消息：Rich Message 使用原始 Markdown，其余走 MarkdownV2。"""
         mid = msg_id or answer_messageid
         if RICH_MODE and not plain:
-            await _bot_api("editMessageText", {
-                "chat_id": chatid,
-                "message_id": mid,
-                "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text)},
-                "disable_web_page_preview": True,
-            })
-        else:
-            pm = None if plain else "MarkdownV2"
-            await context.bot.edit_message_text(
-                chat_id=chatid,
-                message_id=mid,
-                text=text,
-                parse_mode=pm,
-                disable_web_page_preview=True,
-                read_timeout=time_out,
-                write_timeout=time_out,
-                pool_timeout=time_out,
-                connect_timeout=time_out,
-            )
+            try:
+                await _bot_api("editMessageText", {
+                    "chat_id": chatid,
+                    "message_id": mid,
+                    "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text)},
+                    "disable_web_page_preview": True,
+                })
+                return
+            except Exception as exc:
+                # Rich Message rejections do not use the "parse entities"
+                # wording that the callers check for, so a failure here would
+                # otherwise drop the message entirely. Fall back to MarkdownV2.
+                if "not modified" in str(exc).lower():
+                    return
+                logger.warning("Rich Message 编辑失败，回退 MarkdownV2：%s", exc)
+        pm = None if plain else "MarkdownV2"
+        await context.bot.edit_message_text(
+            chat_id=chatid,
+            message_id=mid,
+            text=text,
+            parse_mode=pm,
+            disable_web_page_preview=True,
+            read_timeout=time_out,
+            write_timeout=time_out,
+            pool_timeout=time_out,
+            connect_timeout=time_out,
+        )
 
     async def _send_final(text, *, draft=False, plain=False, raw=None):
         """定稿：Rich Message 使用原始 Markdown，其余走 MarkdownV2。"""
         if RICH_MODE and not plain:
-            return await _bot_api("sendRichMessage", {
-                "chat_id": chatid,
-                "message_thread_id": message_thread_id,
-                "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text)},
-                "disable_web_page_preview": True,
-            })
+            try:
+                return await _bot_api("sendRichMessage", {
+                    "chat_id": chatid,
+                    "message_thread_id": message_thread_id,
+                    "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text)},
+                    "disable_web_page_preview": True,
+                })
+            except Exception as exc:
+                # Never lose the answer because Rich Message was rejected.
+                logger.warning("Rich Message 发送失败，回退 MarkdownV2：%s", exc)
         pm = None if plain else "MarkdownV2"
         if draft:
             return await _bot_api("sendMessage", {
@@ -869,18 +893,21 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     async def _update_draft(text, *, raw=None):
         """更新私聊 Draft 预览；Draft 不创建普通 Message，也没有 message_id。"""
         if RICH_MODE:
-            await _bot_api("sendRichMessageDraft", {
-                "chat_id": chatid,
-                "draft_id": draft_id,
-                "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text) or "…"},
-            })
-        else:
-            await _bot_api("sendMessageDraft", {
-                "chat_id": chatid,
-                "draft_id": draft_id,
-                "text": text or "…",
-                "parse_mode": "MarkdownV2",
-            })
+            try:
+                await _bot_api("sendRichMessageDraft", {
+                    "chat_id": chatid,
+                    "draft_id": draft_id,
+                    "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text) or "…"},
+                })
+                return
+            except Exception as exc:
+                logger.warning("Rich Draft 更新失败，回退普通 Draft：%s", exc)
+        await _bot_api("sendMessageDraft", {
+            "chat_id": chatid,
+            "draft_id": draft_id,
+            "text": text or "…",
+            "parse_mode": "MarkdownV2",
+        })
     async def _start_status_animation(initial_text, text_provider):
         """Replace the placeholder with a real tool status until text arrives."""
         nonlocal think_stop_event, think_task, lastresult
