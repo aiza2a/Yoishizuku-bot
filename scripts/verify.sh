@@ -10,6 +10,8 @@ python3 -m py_compile \
   app/tool_request.py \
   app/overrides/aient_plugins_config.py \
   app/overrides/aient_scoped_search.py \
+  app/overrides/aient_weather.py \
+  app/overrides/aient_image.py \
   app/overrides/memory_store.py \
   app/overrides/role_dialogue_store.py \
   app/overrides/i18n_override.py \

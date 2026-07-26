@@ -76,6 +76,16 @@ strings["get_search_results"] = {
 strings["search_scoped"] = {
     "zh": "限定搜索", "en": "Scoped search", "zh-hk": "限定搜尋", "ja": "範囲検索", "ru": "Scoped search",
 }
+strings["get_weather"] = {
+    "zh": "天气空气", "en": "Weather", "zh-hk": "天氣空氣", "ja": "天気", "ru": "Weather",
+}
+strings["retry_unavailable"] = {
+    "zh": "这里还没有可以重说的话。先问我一句吧。",
+    "en": "There is nothing to regenerate yet. Ask me something first.",
+    "zh-hk": "這裡還沒有可以重說的話。先問我一句吧。",
+    "ja": "まだ言い直せる返事がありません。先に何か聞いてください。",
+    "ru": "There is nothing to regenerate yet. Ask me something first.",
+}
 strings["get_url_content"] = {
     "zh": "网址总结", "en": "URL summary", "zh-hk": "網址總結", "ja": "URL要約", "ru": "URL要約",
 }

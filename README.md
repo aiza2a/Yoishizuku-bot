@@ -177,6 +177,25 @@ GOOGLE_CSE_ID=
 
 没有配置商业 API 密钥时，`ddg` 会继续作为免费回退来源。`official` 范围最好同时指定 `sites`，例如 `openai.com`；否则不能把“官方”当作已验证事实。
 
+### 天气与图像插件
+
+`get_weather` 使用 Open-Meteo 公共接口，无需密钥，返回实况、体感、风力、降水概率、日出日落与空气质量，并附带数据来源。可用 `WEATHER_TIMEOUT` 调整超时。
+
+`generate_image` 已改为可独立配置，不再依赖上游写死的 `API` 变量：
+
+```dotenv
+IMAGE_API_KEY=你的图像服务密钥
+IMAGE_BASE_URL=https://你的图像服务/v1/images/generations
+IMAGE_MODEL_NAME=dall-e-3
+IMAGE_TIMEOUT=120
+```
+
+未设置 `IMAGE_BASE_URL` 时，会从 `BASE_URL` 推导 `/images/generations`；未设置 `IMAGE_API_KEY` 时依次回退 `API`、`API_KEY`。密钥缺失或服务报错会返回明确的工具错误，而不是静默失败。
+
+### 重新生成回复
+
+`/retry` 会重新生成当前对话最近一次**纯文本**回复：先从模型上下文和 SQLite 记忆中回滚上一轮问答，删除旧回复消息，再用原问题重新请求模型。图片、语音、文件等非文本轮次不会记录为可重试对象；已被 `/reset` 或摘要覆盖的历史不会被回滚。
+
 ## 命令
 
 | 命令 | 作用 |
@@ -185,6 +204,7 @@ GOOGLE_CSE_ID=
 | `/info` | 查看并调整机器人信息、模型与偏好 |
 | `/model` | 快速切换模型 |
 | `/reset` | 重置当前对话上下文 |
+| `/retry` | 重新生成最近一次文本回复 |
 | `/memory` | 查看当前对话的记忆信息 |
 | `/forget` | 清理当前对话记忆 |
 | `/persona` | 管理角色与对话档案 |

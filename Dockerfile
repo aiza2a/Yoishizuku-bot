@@ -23,6 +23,8 @@ COPY app/overrides/aient_base.py          /home/aient/aient/models/base.py
 COPY app/overrides/aient_chatgpt.py       /home/aient/aient/models/chatgpt.py
 COPY app/overrides/aient_plugins_config.py /home/aient/aient/plugins/config.py
 COPY app/overrides/aient_scoped_search.py  /home/aient/aient/plugins/scoped_search.py
+COPY app/overrides/aient_weather.py        /home/aient/aient/plugins/weather.py
+COPY app/overrides/aient_image.py          /home/aient/aient/plugins/image.py
 COPY app/overrides/aient_run_python.py    /home/aient/aient/plugins/run_python.py
 COPY app/overrides/aient_utils_scripts.py /home/aient/aient/utils/scripts.py
 

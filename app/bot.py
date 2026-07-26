@@ -258,6 +258,8 @@ conversation_stop_events = defaultdict(asyncio.Event)
 message_cache = defaultdict(list)
 time_stamps = defaultdict(list)
 summary_tasks = {}
+# Newest plain-text exchange per runtime conversation, used by /retry.
+LAST_EXCHANGE = {}
 
 @decorators.PrintMessage
 @decorators.GroupAuthorization
@@ -1083,6 +1085,16 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             schedule_persistent_summary(convo_id, model_name, api_url, api_key)
         except Exception as exc:
             logger.warning(f"Persistent memory write failed: {exc}")
+        # Remember the plain-text exchange so /retry can regenerate it.
+        if isinstance(message, str):
+            LAST_EXCHANGE[convo_id] = {
+                "text": message,
+                "config_convo_id": config_convo_id,
+                "user_id": user_id,
+                "answer_message_id": answer_messageid,
+            }
+        else:
+            LAST_EXCHANGE.pop(convo_id, None)
 
     if Users.get_config(config_convo_id, "FOLLOW_UP") and tmpresult.strip():
         if title != "":
@@ -2045,6 +2057,62 @@ async def reset_chat(update, context):
     await delete_message(update, context, [message.message_id, user_message_id])
 
 
+@decorators.GroupAuthorization
+@decorators.Authorization
+@decorators.APICheck
+async def retry_chat(update, context):
+    """Regenerate the most recent plain-text answer in this conversation."""
+    _, _, _, chatid, user_message_id, _, _, message_thread_id, convo_id, _, _, _ = await GetMesageInfo(update, context)
+    _, _, runtime_convo_id = active_dialogue_context(update, chatid, convo_id)
+    lang = get_current_lang(convo_id)
+
+    record = LAST_EXCHANGE.get(runtime_convo_id)
+    if not record or not str(record.get("text") or "").strip():
+        notice = await context.bot.send_message(
+            chat_id=chatid,
+            message_thread_id=message_thread_id,
+            text=escape(strings["retry_unavailable"][lang]),
+            parse_mode="MarkdownV2",
+            reply_to_message_id=user_message_id,
+        )
+        await delete_message(update, context, [notice.message_id, user_message_id])
+        return
+
+    robot, _, api_key, api_url = get_robot(convo_id)
+    engine = Users.get_config(convo_id, "engine")
+    # Drop the previous answer from the live context so the model does not
+    # simply repeat it; keep history intact when the shape is unexpected.
+    try:
+        history = robot.conversation.get(runtime_convo_id)
+        while history is not None and len(history) > 1 and history[-1].get("role") != "user":
+            history.pop()
+        if history is not None and len(history) > 1 and history[-1].get("role") == "user":
+            history.pop()
+    except Exception as exc:
+        logger.warning("Retry context trim failed: %s", exc)
+    try:
+        MEMORY.pop_last_turn(runtime_convo_id)
+    except Exception as exc:
+        logger.warning("Retry memory rollback failed: %s", exc)
+
+    previous_answer_id = record.get("answer_message_id")
+    if previous_answer_id:
+        try:
+            await context.bot.delete_message(chat_id=chatid, message_id=previous_answer_id)
+        except Exception as exc:
+            logger.debug("Retry previous answer cleanup skipped: %s", exc)
+
+    LAST_EXCHANGE.pop(runtime_convo_id, None)
+    pass_history = Users.get_config(convo_id, "PASS_HISTORY")
+    async with conversation_request_locks[runtime_convo_id]:
+        conversation_stop_events[runtime_convo_id].clear()
+        await getChatGPT(
+            update.effective_message, context, "", robot, record["text"], chatid, user_message_id,
+            runtime_convo_id, message_thread_id, pass_history, api_key, api_url, engine,
+            user_id=record.get("user_id", ""), config_convo_id=convo_id,
+        )
+
+
 def _format_memory_stats(stats):
     profile = stats.get("profile") or {}
     relation = stats.get("relationship") or {}
@@ -2428,6 +2496,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("info", info))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("reset", reset_chat))
+    application.add_handler(CommandHandler("retry", retry_chat))
     application.add_handler(CommandHandler("model", change_model))
     application.add_handler(CommandHandler("memory", memory_info))
     application.add_handler(CommandHandler("lore", lore_command))

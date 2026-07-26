@@ -295,6 +295,39 @@ class PersistentMemory:
             conn.execute("DELETE FROM turns WHERE convo_id=?", (str(convo_id),))
             conn.execute("DELETE FROM conversations WHERE convo_id=?", (str(convo_id),))
 
+    def pop_last_turn(self, convo_id: str) -> Optional[dict]:
+        """Remove and return the newest stored exchange for a conversation.
+
+        Used by /retry so a regenerated answer does not leave the previous
+        answer in long-term memory. Turns already covered by a reset marker or
+        an emitted summary are kept, because dropping them would desynchronise
+        the summary bookkeeping.
+        """
+        convo_id = str(convo_id)
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, user_text, assistant_text FROM turns WHERE convo_id=? ORDER BY id DESC LIMIT 1",
+                (convo_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            guard = conn.execute(
+                """SELECT COALESCE(reset_after_turn_id, 0) AS reset_id,
+                          COALESCE(last_summarized_turn_id, 0) AS summarized_id
+                   FROM conversations WHERE convo_id=?""",
+                (convo_id,),
+            ).fetchone()
+            turn_id = int(row["id"])
+            if guard is not None and turn_id <= max(int(guard["reset_id"] or 0), int(guard["summarized_id"] or 0)):
+                return None
+            conn.execute("DELETE FROM turns WHERE id=?", (turn_id,))
+            conn.execute("UPDATE conversations SET updated_at=? WHERE convo_id=?", (self._now_utc(), convo_id))
+            return {
+                "id": turn_id,
+                "user_text": row["user_text"],
+                "assistant_text": row["assistant_text"],
+            }
+
     def forget_runtime(self, convo_id: str):
         """Delete one role dialogue and its role-scoped growth records."""
         convo_id = str(convo_id)
