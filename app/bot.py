@@ -2059,10 +2059,22 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Guest 查询没有完整聊天历史；Telegram 若附带被回复消息，则把它作为
     # 明确引用上下文传给模型，让“这个链接是什么”能读取实际 URL。
     reply_context = raw_guest.get("reply_to_message")
+    quoted_image_id = ""
     if isinstance(reply_context, dict):
         reply_text = str(reply_context.get("text") or reply_context.get("caption") or "").strip()
         if reply_text and reply_text not in text:
             text = "引用消息：\n" + reply_text + "\n\n当前问题：\n" + text
+        # Guest updates carry the quoted photo as raw JSON; pick the largest
+        # size so image questions work the same way they do in private chat.
+        photos = reply_context.get("photo")
+        if isinstance(photos, list) and photos:
+            largest = max(
+                (item for item in photos if isinstance(item, dict)),
+                key=lambda item: int(item.get("file_size") or item.get("width") or 0),
+                default=None,
+            )
+            if largest and largest.get("file_id"):
+                quoted_image_id = str(largest["file_id"])
 
     # Guest 会话按调用者隔离，但模型、语言和插件偏好也应继承调用者。
     # 否则切换上游服务后，global.json 里的旧模型会让 Guest 请求失效，
@@ -2082,6 +2094,30 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         api_url = getattr(config, "BASE_URL", None)
 
     logger.warning("Guest 收到召唤：caller=%s chat=%s query=%s text=%r", caller_id, chatid, guest_query_id[:12], text[:80])
+
+    # Turn a quoted photo into a multimodal payload so "what is this image"
+    # works in guest chats, matching private-chat behaviour.
+    guest_prompt = text
+    if quoted_image_id:
+        try:
+            photo_file = await context.bot.get_file(quoted_image_id)
+            raw = bytes(await photo_file.download_as_bytearray())
+            encoded = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+            guest_prompt = [
+                await get_text_message(text, "gpt"),
+                await get_image_message(encoded, "gpt"),
+            ]
+            # Expose the fetchable URL too, so reverse image search can run on
+            # the quoted picture without the user pasting a link.
+            direct_url = str(getattr(photo_file, "file_path", "") or "")
+            if direct_url.startswith("http"):
+                guest_prompt[0] = await get_text_message(
+                    text + "\n\n（这张图片的可访问地址：" + direct_url + "）", "gpt"
+                )
+            logger.warning("Guest 引用图片已附加 %d 字节", len(raw))
+        except Exception as exc:
+            logger.warning("Guest 引用图片读取失败：%s", exc)
+            guest_prompt = text
 
     # Guest 首次应答建立一个可编辑的 inline 消息；结果只会在原调用聊天中出现。
     initial = waiting_text(language, 0)
@@ -2178,7 +2214,7 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         async for chunk in robot.ask_stream_async(
-            text,
+            guest_prompt,
             convo_id=guest_convo_id,
             pass_history=0,
             model=engine,
@@ -2222,10 +2258,19 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         guest_status_task.cancel()
         body = result or "……这次没有收到可以回答的内容。"
         if generated_image and not generated_image.startswith("data:"):
-            # The image is delivered through Telegram's large link preview, so
-            # the URL only needs to be present once and can stay out of the way.
-            plain_body = body.rstrip() + "\n\n" + generated_image
-            if await _edit_guest(plain_body, plain=True, preview=True, preview_url=generated_image):
+            # Deliver the picture through Telegram's large link preview and hide
+            # the raw URL behind a zero-width character, so the chat shows an
+            # image block instead of a blue link.
+            hidden_link = "[\u200b](" + generated_image + ")"
+            markdown_body = escape(body.rstrip(), italic=False) + hidden_link
+            if await _edit_guest(markdown_body, preview=True, preview_url=generated_image):
+                return
+            # Fall back to a plain message with a visible link if the markdown
+            # payload was rejected.
+            if await _edit_guest(
+                body.rstrip() + "\n\n" + generated_image,
+                plain=True, preview=True, preview_url=generated_image,
+            ):
                 return
         final = escape(body, italic=False)
         await _edit_guest(final)
