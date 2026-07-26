@@ -12,6 +12,7 @@ python3 -m py_compile \
   app/overrides/aient_scoped_search.py \
   app/overrides/aient_weather.py \
   app/overrides/aient_image.py \
+  app/overrides/aient_image_search.py \
   app/overrides/memory_store.py \
   app/overrides/role_dialogue_store.py \
   app/overrides/i18n_override.py \

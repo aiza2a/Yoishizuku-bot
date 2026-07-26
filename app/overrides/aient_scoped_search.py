@@ -295,7 +295,8 @@ def _format_hits(query: str, scope: str, domains: list[str], hits: list[dict[str
     if not hits:
         return "<tool_error>没有找到可核验的结果。请更换关键词、放宽站点范围或稍后重试。</tool_error>"
     lines = [
-        "以下是限定检索得到的可核验来源。回答时必须显示实际 URL；没有来源支持的内容不要补充。",
+        "以下是限定检索得到的可核验来源。请保持你既有的角色语气回答，不要切换成报告腔或客服腔。",
+        "只根据这些内容作答：链接、日期和事实必须与来源一致，没有出现的内容不要补充；引用具体资料时给出真实 URL。",
         f"查询：{query}",
         f"范围：{scope or 'web'}" + (f"；站点：{', '.join(domains)}" if domains else ""),
     ]

@@ -25,6 +25,7 @@ COPY app/overrides/aient_plugins_config.py /home/aient/aient/plugins/config.py
 COPY app/overrides/aient_scoped_search.py  /home/aient/aient/plugins/scoped_search.py
 COPY app/overrides/aient_weather.py        /home/aient/aient/plugins/weather.py
 COPY app/overrides/aient_image.py          /home/aient/aient/plugins/image.py
+COPY app/overrides/aient_image_search.py   /home/aient/aient/plugins/image_search.py
 COPY app/overrides/aient_run_python.py    /home/aient/aient/plugins/run_python.py
 COPY app/overrides/aient_utils_scripts.py /home/aient/aient/utils/scripts.py
 

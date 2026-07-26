@@ -135,6 +135,8 @@ Inline 与 Guest 无关。只有需要在输入框内看到候选卡片时，才
 | `SEARCH_MAX_RESULTS` | `5` | 限定搜索最多抓取的去重来源数，范围 1–8 |
 | `TAVILY_API_KEY` / `EXA_API_KEY` | 空 | Tavily / Exa 搜索接口密钥；未设置会自动跳过 |
 | `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` | 空 | Google Programmable Search 的 API Key 与搜索引擎 ID |
+| `SAUCENAO_API_KEY` | 空 | SauceNAO 以图搜图密钥；未设置时该工具返回明确提示 |
+| `SAUCENAO_MIN_SIMILARITY` | `55` | 低于该相似度判定为“没有可靠出处” |
 | `MEMORY_DB_PATH` | `/home/memory_data/gptbot_memory.sqlite3` | SQLite 记忆库路径 |
 | `MEMORY_RECENT_TURNS` | `8` | 注入近期对话轮数 |
 | `MEMORY_MAX_CONTEXT_CHARS` | `7000` | 记忆注入最大字符数 |
@@ -191,6 +193,18 @@ IMAGE_TIMEOUT=120
 ```
 
 未设置 `IMAGE_BASE_URL` 时，会从 `BASE_URL` 推导 `/images/generations`；未设置 `IMAGE_API_KEY` 时依次回退 `API`、`API_KEY`。密钥缺失或服务报错会返回明确的工具错误，而不是静默失败。
+
+### 以图搜图
+
+`search_image_source` 使用 SauceNAO 查找图片出处，返回来源站点、作品名、作者、原图链接与相似度。低于 `SAUCENAO_MIN_SIMILARITY` 时会明确返回“没有可靠出处”，避免模型凭画风猜测作者。
+
+```dotenv
+search_image_source=true
+SAUCENAO_API_KEY=你的密钥
+SAUCENAO_MIN_SIMILARITY=55
+```
+
+密钥在 <https://saucenao.com/user.php> 注册后于账号页面的 API 区域获取；免费额度约为每 30 秒 4 次、每天 100 次。
 
 ### 重新生成回复
 

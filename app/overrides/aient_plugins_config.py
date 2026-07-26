@@ -43,12 +43,18 @@ async def get_tools_result_async(function_call_name, function_full_response, eng
 
         if function_response:
             function_response = (
-                f"You need to response the following question: {prompt}. Search results is provided inside <Search_results></Search_results> XML tags. Your task is to think about the question step by step and then answer the above question in {language} based on the Search results provided. Please response in {language} and adopt a style that is logical, in-depth, and detailed. Note: In order to make the answer appear highly professional, you should be an expert in textual analysis, aiming to make the answer precise and comprehensive. Directly response markdown format, without using markdown code blocks. For each sentence quoting search results, a markdown ordered superscript number url link must be used to indicate the source, e.g., [¹](https://www.example.com)"
+                "You need to answer this question: {prompt}. Search results are provided inside "
+                "<Search_results></Search_results> XML tags. Answer in {language}, based only on the "
+                "search results. Keep your established character voice and speaking style; do not switch "
+                "to a formal report or assistant tone. State facts, dates and links exactly as they appear "
+                "in the results, and say plainly when something was not found. Cite each sourced statement "
+                "with a markdown superscript link, e.g. [¹](https://www.example.com). "
+                "Respond in markdown, without wrapping it in a code block."
                 "Here is the Search results, inside <Search_results></Search_results> XML tags:"
                 "<Search_results>"
-                "{}"
+                "{results}"
                 "</Search_results>"
-            ).format(function_response)
+            ).format(prompt=prompt, language=language, results=function_response)
         else:
             function_response = "无法找到相关信息，停止使用 tools"
 

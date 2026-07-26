@@ -79,6 +79,9 @@ strings["search_scoped"] = {
 strings["get_weather"] = {
     "zh": "天气空气", "en": "Weather", "zh-hk": "天氣空氣", "ja": "天気", "ru": "Weather",
 }
+strings["search_image_source"] = {
+    "zh": "以图搜图", "en": "Image source", "zh-hk": "以圖搜圖", "ja": "画像検索", "ru": "Image source",
+}
 strings["retry_unavailable"] = {
     "zh": "这里还没有可以重说的话。先问我一句吧。",
     "en": "There is nothing to regenerate yet. Ask me something first.",
