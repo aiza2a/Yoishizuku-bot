@@ -1877,7 +1877,10 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             system_prompt=system_prompt,
             plugins=plugins,
         ):
-            if "message_search_stage_" in chunk:
+            if isinstance(chunk, str) and (
+                chunk.startswith("message_search_stage_")
+                or chunk.startswith("message_tool_complete:")
+            ):
                 continue
             result += chunk
             # Guest 走 inline_message_id 编辑，限制频率以避免 Flood control。
