@@ -659,6 +659,17 @@ class chatgpt(BaseLLM):
                 else:
                     self.logger.info(f"function_full_response: {function_full_response}")
 
+            # Some models emit a narrated guess ("the service timed out") in the
+            # same turn that requests a tool. That text precedes any real result,
+            # so it must never reach the user; the post-tool turn produces the
+            # authoritative answer.
+            if full_response.strip():
+                self.logger.warning(
+                    "Discarding %d chars emitted before tool execution", len(full_response.strip())
+                )
+                yield "message_tool_discard_preamble"
+                full_response = ""
+
             function_response = ""
             # 定义处理单个工具调用的辅助函数
             async def process_single_tool_call(tool_name, tool_args, tool_id):

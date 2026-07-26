@@ -612,13 +612,11 @@ def _rich_markdown(text):
     return str(text or "")
 
 
-async def animate_status(context, chatid, message_id, convo_id, stop_event, text_provider, interval=1.6):
+async def animate_status(context, chatid, message_id, convo_id, stop_event, text_provider, interval=4.0):
     """Edit one message repeatedly to show live status animation.
 
-    Telegram throttles edits on a single message to roughly one per second.
-    Editing faster than that gets silently rejected, which used to freeze the
-    placeholder on its first frame. Keep a conservative interval and back off
-    whenever the API asks us to, so the text keeps visibly changing.
+    Telegram throttles edits on a single message. A calm cadence is enough to
+    show progress: the goal is proving the bot is alive, not animating quickly.
     """
     import asyncio as _asyncio
     frame = 0
@@ -670,7 +668,7 @@ async def animate_thinking(context, chatid, message_id, convo_id, stop_event, me
         convo_id,
         stop_event,
         text_provider=lambda frame: waiting_text(lang, frame),
-        interval=1.6,
+        interval=4.0,
     )
 
 async def refresh_persistent_summary(convo_id, model_name, api_url, api_key):
@@ -892,7 +890,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     convo_id,
                     think_stop_event,
                     text_provider=text_provider,
-                    interval=1.6,
+                    interval=4.0,
                 )
             )
 
@@ -957,6 +955,13 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             is_search_stage = isinstance(data, str) and data.startswith("message_search_stage_")
             is_tool_running = isinstance(data, str) and data.startswith("message_tool_running:")
             is_tool_complete = isinstance(data, str) and data.startswith("message_tool_complete:")
+            if isinstance(data, str) and data == "message_tool_discard_preamble":
+                # The model narrated a guess before the tool ran. Drop it so the
+                # user only ever sees the answer built from the real result.
+                result = ""
+                tmpresult = ""
+                lastresult = ""
+                continue
             if is_search_stage:
                 stage_lang = get_current_lang(config_convo_id)
                 await _start_status_animation(
@@ -2077,6 +2082,9 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 or chunk.startswith("message_tool_running:")
                 or chunk.startswith("message_tool_complete:")
             ):
+                continue
+            if chunk == "message_tool_discard_preamble":
+                result = ""
                 continue
             result += chunk
         # Guest inline messages are heavily rate-limited by Telegram. Keeping
