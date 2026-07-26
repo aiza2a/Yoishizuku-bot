@@ -2158,11 +2158,17 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # followed by a long RetryAfter pause.
         body = result or "……这次没有收到可以回答的内容。"
         show_preview = False
-        if generated_image and not generated_image.startswith("data:"):
-            # Append the URL so Telegram shows a preview of the produced image.
-            body = body.rstrip() + "\n\n" + generated_image
-            show_preview = True
         final = escape(body, italic=False)
+        if generated_image and not generated_image.startswith("data:"):
+            # Guest replies are inline messages: the bot is not a chat member
+            # and cannot call send_photo. Append the URL so Telegram renders an
+            # image preview. MarkdownV2 would choke on the raw link, so send the
+            # whole message as plain text in that case.
+            plain_body = body.rstrip() + "\n\n" + generated_image
+            if await _edit_guest(plain_body, plain=True, preview=True):
+                return
+            final = final.rstrip() + "\n\n" + generated_image
+            show_preview = True
         await _edit_guest(final, preview=show_preview)
     except Exception as exc:
         logger.exception("Guest 推理失败：%s", exc)

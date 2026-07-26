@@ -119,10 +119,13 @@ def generate_image(text: str, size: str = "1024x1024") -> str:
         "n": 1,
         "size": dimensions,
     }
-    # Upstream gateways intermittently return 500/502 under load. One retry
-    # turns most of those into a successful generation.
-    attempts = 2
-    response = None
+    # Upstream gateways intermittently fail with 4xx/5xx or drop the connection
+    # mid-response. Retry a few times: the same prompt usually succeeds later.
+    try:
+        attempts = max(1, min(5, int(os.environ.get("IMAGE_RETRY_ATTEMPTS", 3))))
+    except (TypeError, ValueError):
+        attempts = 3
+    last_error = ""
     for attempt in range(1, attempts + 1):
         try:
             started = time.monotonic()
@@ -132,22 +135,32 @@ def generate_image(text: str, size: str = "1024x1024") -> str:
                 json=payload,
                 timeout=_timeout(),
             )
-            _LOGGER.warning(
-                "image request finished in %.1fs status=%s attempt=%d",
-                time.monotonic() - started, response.status_code, attempt,
-            )
         except Exception as exc:
-            _LOGGER.warning("image request failed: %s attempt=%d", type(exc).__name__, attempt)
-            if attempt >= attempts:
-                return f"<tool_error>图像服务连接失败：{type(exc).__name__}</tool_error>"
-            continue
-        if response.status_code == 200 or response.status_code < 500:
+            last_error = type(exc).__name__
+            _LOGGER.warning("image request failed: %s attempt=%d/%d", last_error, attempt, attempts)
+            if attempt < attempts:
+                time.sleep(2)
+                continue
+            return f"<tool_error>图像服务连接失败：{last_error}</tool_error>"
+
+        _LOGGER.warning(
+            "image request finished in %.1fs status=%s attempt=%d/%d",
+            time.monotonic() - started, response.status_code, attempt, attempts,
+        )
+        if response.status_code == 200:
             break
+        # 401/403 mean the credentials are wrong; retrying cannot help.
+        if response.status_code in (401, 403):
+            return f"<tool_error>图像服务拒绝了请求（{response.status_code}），请检查 IMAGE_API_KEY。</tool_error>"
+        last_error = str(response.status_code)
         if attempt < attempts:
             _LOGGER.warning("image gateway returned %s, retrying", response.status_code)
-
-    if response is None:
-        return "<tool_error>图像服务没有返回响应。</tool_error>"
+            time.sleep(2)
+            continue
+        return (
+            f"<tool_error>图像服务多次返回 {response.status_code}，本次没有生成成功。"
+            "请如实说明这次没有画出来，不要编造结果。</tool_error>"
+        )
 
     if response.status_code != 200:
         return f"<tool_error>图像服务返回 {response.status_code}，请检查 IMAGE_BASE_URL 与 IMAGE_MODEL_NAME。</tool_error>"
@@ -155,6 +168,10 @@ def generate_image(text: str, size: str = "1024x1024") -> str:
         image = _extract(response.json())
     except ValueError:
         return "<tool_error>图像服务返回了无法解析的内容。</tool_error>"
+    except Exception as exc:
+        # A truncated body (ChunkedEncodingError) surfaces here as well.
+        _LOGGER.warning("image response unreadable: %s", type(exc).__name__)
+        return f"<tool_error>图像结果传输中断（{type(exc).__name__}），本次没有拿到图片。</tool_error>"
     if not image:
         return "<tool_error>图像服务没有返回可用的图像。</tool_error>"
     return image
