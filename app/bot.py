@@ -1798,15 +1798,25 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not text:
         text = "你好。"
 
-    # Guest 按调用者隔离会话；没有持久聊天归属时避免继承群组设置。
-    # 读取全局默认配置，再让用户自己的动态配置正常覆盖。
+    # Guest 查询没有完整聊天历史；Telegram 若附带被回复消息，则把它作为
+    # 明确引用上下文传给模型，让“这个链接是什么”能读取实际 URL。
+    reply_context = raw_guest.get("reply_to_message")
+    if isinstance(reply_context, dict):
+        reply_text = str(reply_context.get("text") or reply_context.get("caption") or "").strip()
+        if reply_text and reply_text not in text:
+            text = "引用消息：\n" + reply_text + "\n\n当前问题：\n" + text
+
+    # Guest 会话按调用者隔离，但模型、语言和插件偏好也应继承调用者。
+    # 否则切换上游服务后，global.json 里的旧模型会让 Guest 请求失效，
+    # 同时用户在 /info 中启用的网址总结等插件也无法在 Guest 中使用。
     guest_convo_id = "guest:" + caller_id
-    engine = Users.get_config(None, "engine")
-    api_key = Users.get_config(None, "api_key")
-    api_url = Users.get_config(None, "api_url")
-    language = Users.get_config(None, "language")
-    system_prompt = Users.get_config(None, "systemprompt")
-    plugins = Users.extract_plugins_config(None)
+    guest_config_id = caller_id if config.CHAT_MODE == "multiusers" and caller_id else None
+    engine = Users.get_config(guest_config_id, "engine")
+    api_key = Users.get_config(guest_config_id, "api_key")
+    api_url = Users.get_config(guest_config_id, "api_url")
+    language = Users.get_config(guest_config_id, "language")
+    system_prompt = Users.get_config(guest_config_id, "systemprompt")
+    plugins = Users.extract_plugins_config(guest_config_id)
     robot = config.ChatGPTbot
     if not api_key:
         api_key = getattr(config, "API_KEY", None)
@@ -1834,17 +1844,9 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     result = ""
-    last_rendered = ""
-    last_edit_at = 0.0
-    edit_interval = 1.2
 
     async def _edit_guest(text, *, plain=False):
-        """按 Telegram Guest 限制节流编辑，并处理 429 RetryAfter。"""
-        nonlocal last_edit_at
-        import time as _time
-        wait = edit_interval - (_time.monotonic() - last_edit_at)
-        if wait > 0:
-            await asyncio.sleep(wait)
+        """Guest queries permit sparse inline edits; use one final update."""
         while True:
             try:
                 await context.bot.edit_message_text(
@@ -1853,11 +1855,10 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     parse_mode=None if plain else "MarkdownV2",
                     disable_web_page_preview=True,
                 )
-                last_edit_at = _time.monotonic()
                 return True
             except RetryAfter as exc:
                 delay = float(exc.retry_after) + 0.5
-                logger.warning("Guest 编辑受限，%.1f 秒后重试", delay)
+                logger.warning("Guest 最终编辑受限，%.1f 秒后重试", delay)
                 await asyncio.sleep(delay)
             except Exception as exc:
                 if "message is not modified" in str(exc).lower():
@@ -1883,14 +1884,11 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             ):
                 continue
             result += chunk
-            # Guest 走 inline_message_id 编辑，限制频率以避免 Flood control。
-            rendered = escape(result, italic=False)
-            if rendered and rendered != last_rendered:
-                if await _edit_guest(rendered):
-                    last_rendered = rendered
+        # Guest inline messages are heavily rate-limited by Telegram. Keeping
+        # the initial status until generation ends avoids a half-sentence
+        # followed by a long RetryAfter pause.
         final = escape(result or "……这次没有收到可以回答的内容。", italic=False)
-        if final != last_rendered:
-            await _edit_guest(final)
+        await _edit_guest(final)
     except Exception as exc:
         logger.exception("Guest 推理失败：%s", exc)
         await _edit_guest("……刚才的回答出了问题，请再试一次。", plain=True)

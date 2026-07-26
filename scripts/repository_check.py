@@ -20,6 +20,9 @@ checks = {
     "global_model_change_is_guarded": "_configuration_change_allowed" in bot,
     "global_config_requires_admin": "return bool(config.ADMIN_LIST" in bot,
     "role_memory_writes_are_guarded": "_role_shared_memory_mutation_allowed" in bot,
+    "guest_uses_caller_config": "guest_config_id = caller_id" in bot and "Users.extract_plugins_config(guest_config_id)" in bot,
+    "guest_reply_context_is_forwarded": "reply_context = raw_guest.get(\"reply_to_message\")" in bot,
+    "guest_avoids_high_frequency_stream_edits": "Guest inline messages are heavily rate-limited" in bot,
     "verify_uses_current_container": "CONTAINER_NAME=${CONTAINER_NAME:-Yoishizuku-bot}" in verify,
     "legacy_workflow_removed": not (ROOT / ".github" / "workflows" / "main.yml").exists(),
 }
