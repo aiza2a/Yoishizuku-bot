@@ -672,8 +672,12 @@ class chatgpt(BaseLLM):
                 tool_response = ""
                 has_args = safe_get(self.function_call_list, tool_name, "parameters", "required", default=False)
                 if self.function_calls_counter[tool_name] <= self.function_call_max_loop and (tool_args != "{}" or not has_args):
-                    if self.print_log:
-                        self.logger.info(f"Tool use, calling: {tool_name}")
+                    # Tool invocations are always logged: they contain no secrets
+                    # and are essential for diagnosing "nothing happened" reports.
+                    self.logger.warning(f"Tool use, calling: {tool_name}")
+                    # Tell the presentation layer which tool is running so it can
+                    # keep a live status animation while the call blocks.
+                    yield f"message_tool_running:{tool_name}"
 
                     # 处理函数调用结果
                     if is_async:

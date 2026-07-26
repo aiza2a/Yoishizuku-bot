@@ -439,6 +439,55 @@ def thinking_text(lang_code, frame=0):
     return f"`{base} {status_spinner(frame)}`"
 
 
+_WAITING_VARIANTS = {
+    "zh": (
+        "宵雫思索中", "还在想，稍等一下", "我把话理一理", "让我再想清楚一点",
+        "快好了，别急", "还有一点点就好",
+    ),
+    "zh-hk": (
+        "宵雫思索中", "還在想，稍等一下", "我把話理一理", "讓我再想清楚一點",
+        "快好了，別急", "還有一點點就好",
+    ),
+    "ja": (
+        "宵雫が考えています", "もう少しだけ待ってください", "言葉を整えています",
+        "もうすぐまとまります",
+    ),
+    "en": (
+        "Shizuku is thinking", "Still thinking, one moment", "Putting my words together",
+        "Almost ready",
+    ),
+}
+
+_IMAGE_WAITING_VARIANTS = {
+    "zh": (
+        "我先想想画面该怎么摆", "在调整光线和颜色", "细节还在补，稍等一下",
+        "快画好了，再等我一会儿", "最后收一下尾",
+    ),
+    "zh-hk": (
+        "我先想想畫面該怎麼擺", "在調整光線和顏色", "細節還在補，稍等一下",
+        "快畫好了，再等我一會兒", "最後收一下尾",
+    ),
+    "ja": (
+        "構図を考えています", "光と色を整えています", "細部を描き込んでいます",
+        "もうすぐ仕上がります",
+    ),
+    "en": (
+        "Sketching the composition", "Adjusting light and colour", "Filling in the details",
+        "Almost finished",
+    ),
+}
+
+
+def waiting_text(lang_code, frame=0, variants=None):
+    """Rotate short in-character waiting lines so long work never looks frozen."""
+    ui = _ui_lang_name(lang_code)
+    table = variants or _WAITING_VARIANTS
+    pool = table.get(ui) or table.get("en")
+    # Change wording every ~2.4s while the spinner keeps moving each frame.
+    base = pool[(int(frame) // 15) % len(pool)]
+    return f"`{base} {status_spinner(frame)}`"
+
+
 def running_text(stage_text, frame=0):
     """Running/search status with spinner, stage text kept plain."""
     stage = str(stage_text or "").strip()
@@ -491,6 +540,33 @@ def search_running_text(stage_key, lang_code, frame=0):
     return running_text(stage, frame)
 
 
+def tool_running_text(tool_name, lang_code, frame=0):
+    """Rotate in-character lines while a tool call is still blocking."""
+    if tool_name == "generate_image":
+        return waiting_text(lang_code, frame, variants=_IMAGE_WAITING_VARIANTS)
+    ui = _ui_lang_name(lang_code)
+    labels = {
+        "zh": {
+            "get_weather": "我看看外面的天气",
+            "get_time": "我确认一下时间",
+            "get_url_content": "我把这页读一读",
+            "search_image_source": "我找找这张图的出处",
+            "search_scoped": "我去查一查",
+        },
+        "zh-hk": {
+            "get_weather": "我看看外面的天氣",
+            "get_time": "我確認一下時間",
+            "get_url_content": "我把這頁讀一讀",
+            "search_image_source": "我找找這張圖的出處",
+            "search_scoped": "我去查一查",
+        },
+    }
+    base = labels.get(ui, {}).get(tool_name)
+    if not base:
+        base = "我处理一下" if ui == "zh" else "我處理一下" if ui == "zh-hk" else "Working on it"
+    return running_text(base, frame)
+
+
 def tool_completion_running_text(tool_name, lang_code, frame=0):
     """Show a brief fixed hand-off after a real tool result arrives."""
     ui = _ui_lang_name(lang_code)
@@ -514,6 +590,17 @@ def tool_completion_running_text(tool_name, lang_code, frame=0):
     return running_text(f"〔已核对〕 {stage}", frame)
 
 
+def _rich_markdown(text):
+    """Return plain Markdown for Rich Message payloads.
+
+    ``escape()`` targets Telegram MarkdownV2 and inserts backslashes before
+    ``- . + = _`` and friends. Rich Message expects ordinary Markdown, so those
+    escapes would be rendered literally. Only the LaTeX/heading normalisation
+    is useful here, therefore Rich payloads use the raw model output.
+    """
+    return str(text or "")
+
+
 async def animate_status(context, chatid, message_id, convo_id, stop_event, text_provider, interval=0.16):
     """Edit one message repeatedly to show live status animation."""
     import asyncio as _asyncio
@@ -528,7 +615,7 @@ async def animate_status(context, chatid, message_id, convo_id, stop_event, text
                     await context.bot._post("editMessageText", data={
                         "chat_id": chatid,
                         "message_id": message_id,
-                        "rich_message": {"markdown": escape(content)},
+                        "rich_message": {"markdown": _rich_markdown(content)},
                         "disable_web_page_preview": True,
                     })
                 else:
@@ -558,7 +645,7 @@ async def animate_thinking(context, chatid, message_id, convo_id, stop_event, me
         message_id,
         convo_id,
         stop_event,
-        text_provider=lambda frame: thinking_text(lang, frame),
+        text_provider=lambda frame: waiting_text(lang, frame),
         interval=0.16,
     )
 
@@ -682,14 +769,14 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     async def _bot_api(method, data):
         return await context.bot._post(method, data=data)
 
-    async def _edit_msg(text, msg_id=None, *, plain=False):
-        """编辑消息：Rich Message 或 MarkdownV2。"""
+    async def _edit_msg(text, msg_id=None, *, plain=False, raw=None):
+        """编辑消息：Rich Message 使用原始 Markdown，其余走 MarkdownV2。"""
         mid = msg_id or answer_messageid
         if RICH_MODE and not plain:
             await _bot_api("editMessageText", {
                 "chat_id": chatid,
                 "message_id": mid,
-                "rich_message": {"markdown": text},
+                "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text)},
                 "disable_web_page_preview": True,
             })
         else:
@@ -706,13 +793,13 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                 connect_timeout=time_out,
             )
 
-    async def _send_final(text, *, draft=False, plain=False):
-        """定稿：Rich Message 或 MarkdownV2。"""
+    async def _send_final(text, *, draft=False, plain=False, raw=None):
+        """定稿：Rich Message 使用原始 Markdown，其余走 MarkdownV2。"""
         if RICH_MODE and not plain:
             return await _bot_api("sendRichMessage", {
                 "chat_id": chatid,
                 "message_thread_id": message_thread_id,
-                "rich_message": {"markdown": text},
+                "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text)},
                 "disable_web_page_preview": True,
             })
         pm = None if plain else "MarkdownV2"
@@ -731,13 +818,13 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             parse_mode=pm,
             disable_web_page_preview=True,
         )
-    async def _update_draft(text):
+    async def _update_draft(text, *, raw=None):
         """更新私聊 Draft 预览；Draft 不创建普通 Message，也没有 message_id。"""
         if RICH_MODE:
             await _bot_api("sendRichMessageDraft", {
                 "chat_id": chatid,
                 "draft_id": draft_id,
-                "rich_message": {"markdown": text or "…"},
+                "rich_message": {"markdown": _rich_markdown(raw if raw is not None else text) or "…"},
             })
         else:
             await _bot_api("sendMessageDraft", {
@@ -759,14 +846,14 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
         if draft_active:
             try:
                 rendered = escape(initial_text)
-                await _update_draft(rendered)
+                await _update_draft(rendered, raw=initial_text)
                 lastresult = rendered
             except Exception as exc:
                 logger.debug("Draft 工具状态更新跳过：%s", exc)
         elif answer_messageid:
             try:
                 rendered = escape(initial_text)
-                await _edit_msg(rendered)
+                await _edit_msg(rendered, raw=initial_text)
                 lastresult = rendered
             except Exception as exc:
                 logger.debug("工具状态初始更新跳过：%s", exc)
@@ -799,7 +886,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     await _bot_api("sendRichMessageDraft", {
                         "chat_id": chatid,
                         "draft_id": draft_id,
-                        "rich_message": {"markdown": escape(thinking_text(get_current_lang(config_convo_id), 0))},
+                        "rich_message": {"markdown": _rich_markdown(thinking_text(get_current_lang(config_convo_id), 0))},
                     })
                 else:
                     await _bot_api("sendMessageDraft", {
@@ -842,12 +929,21 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                         pass
                 return
             is_search_stage = isinstance(data, str) and data.startswith("message_search_stage_")
+            is_tool_running = isinstance(data, str) and data.startswith("message_tool_running:")
             is_tool_complete = isinstance(data, str) and data.startswith("message_tool_complete:")
             if is_search_stage:
                 stage_lang = get_current_lang(config_convo_id)
                 await _start_status_animation(
                     search_running_text(data, stage_lang, 0),
                     text_provider=lambda frame, key=data, lang=stage_lang: search_running_text(key, lang, frame),
+                )
+                continue
+            if is_tool_running:
+                tool_name = data.partition(":")[2]
+                stage_lang = get_current_lang(config_convo_id)
+                await _start_status_animation(
+                    tool_running_text(tool_name, stage_lang, 0),
+                    text_provider=lambda frame, name=tool_name, lang=stage_lang: tool_running_text(name, lang, frame),
                 )
                 continue
             if is_tool_complete:
@@ -896,9 +992,27 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             tmpresult = title + tmpresult
             history = robot.conversation[convo_id]
             if safe_get(history, -2, "tool_calls", 0, 'function', 'name') == "generate_image" and not image_has_send and safe_get(history, -1, 'content'):
-                image_result = history[-1]['content'].split('\n\n')[1]
-                await context.bot.send_photo(chat_id=chatid, photo=image_result, reply_to_message_id=messageid)
-                image_has_send = 1
+                # The tool returns either a bare URL or a data: payload. Older
+                # upstream builds returned a multi-paragraph blob, so accept both
+                # instead of blindly taking the second paragraph.
+                raw_image = str(history[-1]['content'])
+                image_result = ""
+                for candidate in re.split(r"\s+", raw_image.strip()):
+                    if candidate.startswith(("http://", "https://", "data:image/")):
+                        image_result = candidate
+                        break
+                if image_result:
+                    try:
+                        if image_result.startswith("data:image/") and ";base64," in image_result:
+                            payload = base64.b64decode(image_result.split(";base64,", 1)[1])
+                            await context.bot.send_photo(chat_id=chatid, photo=payload, reply_to_message_id=messageid)
+                        else:
+                            await context.bot.send_photo(chat_id=chatid, photo=image_result, reply_to_message_id=messageid)
+                        image_has_send = 1
+                    except Exception as exc:
+                        logger.warning("生成图片发送失败：%s", exc)
+                else:
+                    logger.warning("生图工具返回中没有可用的图片地址：%s", raw_image[:120])
             modifytime = modifytime + 1
 
             split_len = 3500
@@ -970,10 +1084,10 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     try:
                         if draft_active:
                             # Draft 无 message_id；先将首段正式定稿，再切换到常规第二段消息。
-                            await _send_final(rendered_split, draft=True)
+                            await _send_final(rendered_split, draft=True, raw=send_split_message)
                             draft_active = False
                         else:
-                            await _edit_msg(rendered_split)
+                            await _edit_msg(rendered_split, raw=send_split_message)
                         lastresult = rendered_split
                     except Exception as e:
                         if "parse entities" in str(e):
@@ -996,12 +1110,20 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
 
             now_result = escape(tmpresult, italic=False)
             if now_result and modifytime % Frequency_Modification == 0 and lastresult != now_result:
+                # Telegram throttles rapid edits. Honour RetryAfter instead of
+                # dropping the update, otherwise the visible text can stall on a
+                # half-finished sentence until the final edit lands.
+                if stream_retry_until > time.monotonic():
+                    continue
                 try:
                     if draft_active:
-                        await _update_draft(now_result)
+                        await _update_draft(now_result, raw=tmpresult)
                     else:
-                        await _edit_msg(now_result)
+                        await _edit_msg(now_result, raw=tmpresult)
                     lastresult = now_result
+                except RetryAfter as exc:
+                    stream_retry_until = time.monotonic() + float(exc.retry_after) + 0.5
+                    logger.warning("流式更新受限，暂停 %.1f 秒", float(exc.retry_after) + 0.5)
                 except Exception as e:
                     logger.debug("流式更新跳过：%s", e)
     except Exception as e:
@@ -1058,7 +1180,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     # Draft 是临时预览，必须无条件发送正式消息，不能受 lastresult 去重影响。
     if draft_active:
         try:
-            await _send_final(now_result, draft=True)
+            await _send_final(now_result, draft=True, raw=tmpresult)
             draft_active = False
         except Exception as e:
             if "parse entities" in str(e):
@@ -1073,7 +1195,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             logger.warning("Telegram code-entity fallback used; chars=%s", len(now_result))
         elif lastresult != now_result and answer_messageid:
             try:
-                await _edit_msg(now_result)
+                await _edit_msg(now_result, raw=tmpresult)
             except Exception as e:
                 if "parse entities" in str(e):
                     await _edit_msg(tmpresult, plain=True)
@@ -1926,6 +2048,7 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         ):
             if isinstance(chunk, str) and (
                 chunk.startswith("message_search_stage_")
+                or chunk.startswith("message_tool_running:")
                 or chunk.startswith("message_tool_complete:")
             ):
                 continue
