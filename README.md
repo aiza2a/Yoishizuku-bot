@@ -129,6 +129,11 @@ Inline 与 Guest 无关。只有需要在输入框内看到候选卡片时，才
 | `TOOL_CALL_MODELS` | 空 | 仅对指定模型发送 OpenAI `tools` 字段；逗号分隔，支持 `*` |
 | `TOOL_DISABLED_MODELS` | 空 | 禁止向指定模型发送工具字段；优先于 `TOOL_CALL_MODELS` |
 | `TOOL_NONSTREAM_MODELS` | 空 | 指定模型启用工具时改用非流式 HTTP 响应；支持 `*` |
+| `SEARCH_PROVIDERS` | `tavily,exa,google,ddg` | 限定搜索使用的聚合来源，按顺序以逗号分隔 |
+| `SEARCH_PROVIDER_TIMEOUT` | `8` | 单个搜索来源的超时秒数 |
+| `SEARCH_MAX_RESULTS` | `5` | 限定搜索最多抓取的去重来源数，范围 1–8 |
+| `TAVILY_API_KEY` / `EXA_API_KEY` | 空 | Tavily / Exa 搜索接口密钥；未设置会自动跳过 |
+| `GOOGLE_API_KEY` / `GOOGLE_CSE_ID` | 空 | Google Programmable Search 的 API Key 与搜索引擎 ID |
 | `MEMORY_DB_PATH` | `/home/memory_data/gptbot_memory.sqlite3` | SQLite 记忆库路径 |
 | `MEMORY_RECENT_TURNS` | `8` | 注入近期对话轮数 |
 | `MEMORY_MAX_CONTEXT_CHARS` | `7000` | 记忆注入最大字符数 |
@@ -152,6 +157,24 @@ get_url_content=True
 若网关只在非流式请求中正确返回工具调用，可为该模型设置 `TOOL_NONSTREAM_MODELS`。仅当当前会话启用了至少一个工具时才会关闭该次 HTTP 请求的流式传输。
 
 `download_read_arxiv_pdf`（论文）和 `run_python_script`（代码执行）已从 Telegram 菜单、用户配置和发送给模型的工具 schema 中移除。`TOOL_ALLOWLIST` 还能进一步缩减其他工具；这些规则不会删除上游基础镜像内的 Python 文件，但会阻止它们被调用。其余工具的开关仍由同名环境变量或 `/info` 菜单控制。
+
+### 限定聚合搜索
+
+`search_scoped` 是新的统一搜索插件。模型可按问题选择 `web`、`official`、`github`、`docs`、`wiki`、`bilibili` 范围，并可传入 `sites=openai.com,developers.openai.com` 一类域名限定。插件并发聚合已配置的 Tavily、Exa、Google 与 DuckDuckGo 结果，规范化 URL、去重并抓取前几个网页正文；返回内容保留标题、实际 URL、检索源和网页文本，供模型据此回答。
+
+生产环境建议启用新插件并隐藏旧搜索入口：
+
+```dotenv
+search_scoped=true
+TOOL_DENYLIST=get_search_results
+SEARCH_PROVIDERS=tavily,exa,google,ddg
+TAVILY_API_KEY=
+EXA_API_KEY=
+GOOGLE_API_KEY=
+GOOGLE_CSE_ID=
+```
+
+没有配置商业 API 密钥时，`ddg` 会继续作为免费回退来源。`official` 范围最好同时指定 `sites`，例如 `openai.com`；否则不能把“官方”当作已验证事实。
 
 ## 命令
 

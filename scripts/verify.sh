@@ -8,6 +8,8 @@ python3 -m py_compile \
   app/config.py \
   app/tool_policy.py \
   app/tool_request.py \
+  app/overrides/aient_plugins_config.py \
+  app/overrides/aient_scoped_search.py \
   app/overrides/memory_store.py \
   app/overrides/role_dialogue_store.py \
   app/overrides/i18n_override.py \

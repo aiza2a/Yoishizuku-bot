@@ -33,6 +33,8 @@ services:
       # - ./app/overrides/bot_utils_scripts.py:/home/utils/scripts.py:ro
       # - ./app/overrides/aient_base.py:/home/aient/aient/models/base.py:ro
       # - ./app/overrides/aient_chatgpt.py:/home/aient/aient/models/chatgpt.py:ro
+      # - ./app/overrides/aient_plugins_config.py:/home/aient/aient/plugins/config.py:ro
+      # - ./app/overrides/aient_scoped_search.py:/home/aient/aient/plugins/scoped_search.py:ro
       # - ./app/overrides/aient_utils_scripts.py:/home/aient/aient/utils/scripts.py:ro
       # - ./app/overrides/aient_run_python.py:/home/aient/aient/plugins/run_python.py:ro
       # - ./persona/persona.env:/home/persona.env:ro

@@ -73,6 +73,9 @@ strings["REPLY"] = {
 strings["get_search_results"] = {
     "zh": "网络搜索", "en": "Web search", "zh-hk": "網絡搜索", "ja": "ウェブ検索", "ru": "ウェブ検索",
 }
+strings["search_scoped"] = {
+    "zh": "限定搜索", "en": "Scoped search", "zh-hk": "限定搜尋", "ja": "範囲検索", "ru": "Scoped search",
+}
 strings["get_url_content"] = {
     "zh": "网址总结", "en": "URL summary", "zh-hk": "網址總結", "ja": "URL要約", "ru": "URL要約",
 }
