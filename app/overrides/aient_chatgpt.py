@@ -782,10 +782,11 @@ class chatgpt(BaseLLM):
                         # The raw URL is preserved separately for the sender.
                         tool_info["generated_image"] = tool_response
                         final_tool_response = (
-                            "图像已生成成功，并且已经直接发送给用户了。\n"
+                            "图像已生成成功，并且已经直接展示给用户了。\n"
                             f"图像地址：{tool_response}\n"
-                            "请据此简短自然地回应，例如把图交给对方看。"
-                            "不要说生成失败、超时或没有响应；也不要重复贴出这个地址。"
+                            "请用一两句自然的话把图交给对方看，例如「画好了，你看看」。"
+                            "不要说生成失败、超时或没有响应；不要复述这个地址；"
+                            "也不要长篇描述画面内容，用户自己能看到。"
                         )
                 all_responses.append(ToolResult(tool_name, tool_args, final_tool_response))
 

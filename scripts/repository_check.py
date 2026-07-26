@@ -31,6 +31,7 @@ checks = {
     "image_bytes_uploaded_directly": "def _fetch_image_bytes" in bot and "asyncio.to_thread(_fetch_image_bytes" in bot,
     "guest_has_status_animation": "_animate_guest" in bot and "guest_status_stop.set()" in bot,
     "guest_animation_stops_on_exit": "finally:" in bot and bot.count("guest_status_task.cancel()") >= 2,
+    "guest_uses_large_link_preview": "LinkPreviewOptions" in bot and "prefer_large_media=True" in bot,
     "guest_shows_generated_image": "generated_image and not generated_image.startswith" in bot,
     "image_gateway_retries": "retrying" in (ROOT / "app" / "overrides" / "aient_image.py").read_text(encoding="utf-8"),
     "tool_execution_has_timeout": "TOOL_EXECUTION_TIMEOUT" in (ROOT / "app" / "overrides" / "aient_plugins_config.py").read_text(encoding="utf-8"),

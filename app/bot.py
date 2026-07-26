@@ -146,7 +146,7 @@ except Exception:
 from utils.scripts import GetMesageInfo, safe_get, is_emoji, _matched_nick_prefix
 
 from telegram.constants import ChatAction
-from telegram import BotCommand, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto, InlineKeyboardButton
+from telegram import BotCommand, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent, Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto, InlineKeyboardButton, LinkPreviewOptions
 from telegram.ext import CommandHandler, MessageHandler, ApplicationBuilder, filters, CallbackQueryHandler, Application, InlineQueryHandler, ContextTypes, TypeHandler
 from datetime import timedelta
 
@@ -2142,15 +2142,28 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     guest_status_task = asyncio.create_task(_animate_guest())
 
-    async def _edit_guest(text, *, plain=False, preview=False):
+    async def _edit_guest(text, *, plain=False, preview=False, preview_url=""):
         """Guest queries permit sparse inline edits; use one final update."""
+        if preview and preview_url:
+            # The bot is not a member of the caller's chat, so send_photo is not
+            # available for guest replies. Force a large preview of the produced
+            # image and place it above the text, which renders like a real photo
+            # instead of a bare blue link.
+            link_preview = LinkPreviewOptions(
+                is_disabled=False,
+                url=preview_url,
+                prefer_large_media=True,
+                show_above_text=True,
+            )
+        else:
+            link_preview = LinkPreviewOptions(is_disabled=True)
         while True:
             try:
                 await context.bot.edit_message_text(
                     text=text,
                     inline_message_id=inline_message_id,
                     parse_mode=None if plain else "MarkdownV2",
-                    disable_web_page_preview=not preview,
+                    link_preview_options=link_preview,
                 )
                 return True
             except RetryAfter as exc:
@@ -2208,19 +2221,14 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         guest_status_stop.set()
         guest_status_task.cancel()
         body = result or "……这次没有收到可以回答的内容。"
-        show_preview = False
-        final = escape(body, italic=False)
         if generated_image and not generated_image.startswith("data:"):
-            # Guest replies are inline messages: the bot is not a chat member
-            # and cannot call send_photo. Append the URL so Telegram renders an
-            # image preview. MarkdownV2 would choke on the raw link, so send the
-            # whole message as plain text in that case.
+            # The image is delivered through Telegram's large link preview, so
+            # the URL only needs to be present once and can stay out of the way.
             plain_body = body.rstrip() + "\n\n" + generated_image
-            if await _edit_guest(plain_body, plain=True, preview=True):
+            if await _edit_guest(plain_body, plain=True, preview=True, preview_url=generated_image):
                 return
-            final = final.rstrip() + "\n\n" + generated_image
-            show_preview = True
-        await _edit_guest(final, preview=show_preview)
+        final = escape(body, italic=False)
+        await _edit_guest(final)
     except Exception as exc:
         logger.exception("Guest 推理失败：%s", exc)
         await _edit_guest("……刚才的回答出了问题，请再试一次。", plain=True)
