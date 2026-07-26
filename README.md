@@ -194,6 +194,20 @@ IMAGE_TIMEOUT=120
 
 未设置 `IMAGE_BASE_URL` 时，会从 `BASE_URL` 推导 `/images/generations`；未设置 `IMAGE_API_KEY` 时依次回退 `API`、`API_KEY`。密钥缺失或服务报错会返回明确的工具错误，而不是静默失败。
 
+### 模型面板
+
+`/info` 顶部同时显示当前**对话模型**与**生图模型**，访问区显示对话接口与生图接口。点击「切换模型」后先选类别，再选具体模型：
+
+```text
+切换模型
+├── 对话模型 · deepseek-v4-flash-free
+└── 生图模型 · gpt-image-2
+```
+
+生图模型列表从 `IMAGE_BASE_URL` 的 `/models` 拉取，按 `IMAGE_MODEL_KEYWORDS` 过滤。选择结果保存为用户配置 `image_engine`，重启不丢，无需改 `.env`。未取到列表时只显示当前模型并提示。
+
+`IMAGE_BASE_URL` 可填网关根或任意端点后缀（`/v1`、`/v1/responses`、`/v1/chat/completions`），都会正确解析到 `/images/generations`。
+
 ### 以图搜图
 
 `search_image_source` 使用 SauceNAO 查找图片出处，返回来源站点、作品名、作者、原图链接与相似度。低于 `SAUCENAO_MIN_SIMILARITY` 时会明确返回“没有可靠出处”，避免模型凭画风猜测作者。

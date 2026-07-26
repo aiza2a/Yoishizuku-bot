@@ -82,6 +82,36 @@ strings["get_weather"] = {
 strings["search_image_source"] = {
     "zh": "以图搜图", "en": "Image source", "zh-hk": "以圖搜圖", "ja": "画像検索", "ru": "Image source",
 }
+strings["button_chat_models"] = {
+    "zh": "对话模型", "en": "Chat model", "zh-hk": "對話模型", "ja": "対話モデル", "ru": "Chat model",
+}
+strings["button_image_models"] = {
+    "zh": "生图模型", "en": "Image model", "zh-hk": "生圖模型", "ja": "画像モデル", "ru": "Image model",
+}
+strings["model_current_suffix"] = {
+    "zh": "当前", "en": "current", "zh-hk": "當前", "ja": "選択中", "ru": "current",
+}
+strings["image_models_unavailable"] = {
+    "zh": "没有取到可用的生图模型",
+    "en": "No image models available",
+    "zh-hk": "沒有取到可用的生圖模型",
+    "ja": "利用できる画像モデルがありません",
+    "ru": "No image models available",
+}
+strings["image_model_changed"] = {
+    "zh": "生图模型已切换为：`{model_name}`",
+    "en": "Image model changed to: `{model_name}`",
+    "zh-hk": "生圖模型已切換為：`{model_name}`",
+    "ja": "画像モデルを変更しました：`{model_name}`",
+    "ru": "Image model changed to: `{model_name}`",
+}
+strings["model_panel_banner"] = {
+    "zh": "想调整哪一类模型？",
+    "en": "Which kind of model would you like to change?",
+    "zh-hk": "想調整哪一類模型？",
+    "ja": "どちらのモデルを変更しますか？",
+    "ru": "Which kind of model would you like to change?",
+}
 strings["retry_unavailable"] = {
     "zh": "这里还没有可以重说的话。先问我一句吧。",
     "en": "There is nothing to regenerate yet. Ask me something first.",

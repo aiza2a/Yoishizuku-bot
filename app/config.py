@@ -469,6 +469,70 @@ def _info_ui_lang(user_id=None):
     return "en"
 
 
+IMAGE_BASE_URL = os.environ.get('IMAGE_BASE_URL', None)
+IMAGE_MODEL_NAME = os.environ.get('IMAGE_MODEL_NAME', 'dall-e-3')
+IMAGE_MODEL_KEYWORDS = [
+    value.strip().casefold()
+    for value in os.environ.get(
+        'IMAGE_MODEL_KEYWORDS',
+        'image,dall,flux,kolors,seedream,midjourney,imagen,sd3,stable-diffusion,nano-banana',
+    ).split(',')
+    if value.strip()
+]
+
+# Image models are discovered from the image gateway, not the chat gateway.
+image_initial_model = []
+
+
+def image_endpoint_base():
+    """Return the image gateway root, tolerating a mistyped endpoint suffix."""
+    base = (IMAGE_BASE_URL or BASE_URL or '').strip().rstrip('/')
+    if not base:
+        return ''
+    for suffix in ('/images/generations', '/chat/completions', '/responses', '/completions', '/images'):
+        if base.endswith(suffix):
+            return base[: -len(suffix)]
+    return base
+
+
+def looks_like_image_model(name):
+    lowered = str(name or '').casefold()
+    return any(keyword in lowered for keyword in IMAGE_MODEL_KEYWORDS)
+
+
+async def get_image_models():
+    """Fetch selectable image models from the configured image gateway."""
+    global image_initial_model
+    base = image_endpoint_base()
+    key = (os.environ.get('IMAGE_API_KEY') or os.environ.get('API') or API_KEY or '').strip()
+    if not base or not key:
+        image_initial_model = []
+        return image_initial_model
+    try:
+        response = requests.get(
+            base + '/models',
+            headers={'Authorization': 'Bearer ' + key},
+            timeout=15,
+        )
+        response.raise_for_status()
+        names = [str(item.get('id')) for item in response.json().get('data', []) if item.get('id')]
+    except Exception as exc:
+        print('image model discovery failed: ' + type(exc).__name__)
+        image_initial_model = []
+        return image_initial_model
+    image_initial_model = sorted({name for name in names if looks_like_image_model(name)})
+    return image_initial_model
+
+
+def get_image_engine(user_id=None):
+    """Resolve the effective image model for a chat."""
+    try:
+        configured = Users.get_config(user_id, 'image_engine')
+    except Exception:
+        configured = None
+    return str(configured or IMAGE_MODEL_NAME or 'dall-e-3')
+
+
 def update_info_message(user_id=None):
     api_key = Users.get_config(user_id, "api_key")
     api_url = Users.get_config(user_id, "api_url")
@@ -480,6 +544,8 @@ def update_info_message(user_id=None):
             "access": "Access",
             "identity": "Identity",
             "model": "Model",
+            "image_model": "Image",
+            "image_url": "Image API",
             "tokens": "Tokens",
             "version": "Version",
             "api_key": "API Key",
@@ -491,7 +557,9 @@ def update_info_message(user_id=None):
             "runtime": "运行",
             "access": "访问",
             "identity": "身份",
-            "model": "模型",
+            "model": "对话模型",
+            "image_model": "生图模型",
+            "image_url": "生图接口",
             "tokens": "用量",
             "version": "版本",
             "api_key": "密钥",
@@ -503,7 +571,9 @@ def update_info_message(user_id=None):
             "runtime": "運行",
             "access": "訪問",
             "identity": "身份",
-            "model": "模型",
+            "model": "對話模型",
+            "image_model": "生圖模型",
+            "image_url": "生圖介面",
             "tokens": "用量",
             "version": "版本",
             "api_key": "密鑰",
@@ -515,7 +585,9 @@ def update_info_message(user_id=None):
             "runtime": "実行",
             "access": "アクセス",
             "identity": "識別",
-            "model": "モデル",
+            "model": "対話モデル",
+            "image_model": "画像モデル",
+            "image_url": "画像API",
             "tokens": "使用量",
             "version": "バージョン",
             "api_key": "APIキー",
@@ -539,6 +611,7 @@ def update_info_message(user_id=None):
     lines = []
     lines.append("**" + t["runtime"] + "**")
     lines.append("• " + t["model"] + ": `" + str(model) + "`")
+    lines.append("• " + t["image_model"] + ": `" + str(get_image_engine(user_id)) + "`")
     if tokens is not None:
         lines.append("• " + t["tokens"] + ": `" + str(tokens) + "`")
     lines.append("• " + t["version"] + ": `" + str(check_for_updates()) + "`")
@@ -548,6 +621,9 @@ def update_info_message(user_id=None):
         access_lines.append("• " + t["api_key"] + ": `" + str(replace_with_asterisk(api_key)) + "`")
     if api_url:
         access_lines.append("• " + t["base_url"] + ": `" + str(mask_url(api_url)) + "`")
+    image_base = image_endpoint_base()
+    if image_base:
+        access_lines.append("• " + t["image_url"] + ": `" + str(mask_url(image_base)) + "`")
     if WEB_HOOK:
         access_lines.append("• " + t["webhook"] + ": `" + str(WEB_HOOK) + "`")
     if access_lines:
@@ -871,6 +947,36 @@ def get_current_lang(chatid=None):
     current_lang = Users.get_config(chatid, "language")
     return LANGUAGES_TO_CODE[current_lang]
 
+def update_model_kind_buttons(chatid=None):
+    """First level of the model panel: pick chat models or image models."""
+    lang = get_current_lang(chatid)
+    chat_label = strings["button_chat_models"][lang] + "  ·  " + str(Users.get_config(chatid, "engine"))
+    image_label = strings["button_image_models"][lang] + "  ·  " + str(get_image_engine(chatid))
+    return [
+        [InlineKeyboardButton(chat_label[:60], callback_data="CHAT_MODELS")],
+        [InlineKeyboardButton(image_label[:60], callback_data="IMAGE_MODELS")],
+        [InlineKeyboardButton(strings["button_back"][lang], callback_data="BACK")],
+    ]
+
+
+def update_image_models_buttons(chatid=None):
+    """Second level: list discovered image models, marking the active one."""
+    lang = get_current_lang(chatid)
+    current = get_image_engine(chatid)
+    names = list(image_initial_model)
+    if current and current not in names:
+        names.insert(0, current)
+
+    buttons = []
+    for name in names[:30]:
+        label = name + ("  ·  " + strings["model_current_suffix"][lang] if name == current else "")
+        buttons.append([InlineKeyboardButton(label[:60], callback_data=name + "_IMAGEMODELS")])
+    if not buttons:
+        buttons.append([InlineKeyboardButton(strings["image_models_unavailable"][lang][:60], callback_data="MODELS")])
+    buttons.append([InlineKeyboardButton(strings["button_back"][lang], callback_data="MODELS")])
+    return buttons
+
+
 def update_models_buttons(chatid=None, group=None):
     lang = get_current_lang(chatid)
     back_button_data = "BACK"  # Default value
@@ -882,6 +988,7 @@ def update_models_buttons(chatid=None, group=None):
         back_button_data = "MODELS"  # To return to model groups
     elif MODEL_GROUPS and not group:
         # Showing groups
+        back_button_data = "MODELS"
         groups_list = list(MODEL_GROUPS.keys())
 
         # Creating buttons manually
@@ -911,7 +1018,7 @@ def update_models_buttons(chatid=None, group=None):
     else:
         # Showing all models (if there are no groups)
         buttons = create_buttons(initial_model, Suffix="_MODELS")
-        back_button_data = "BACK"  # To return to the main menu
+        back_button_data = "MODELS"  # Back to the model category picker
 
     # Adding a "Back" button with appropriate callback_data
     buttons.append(

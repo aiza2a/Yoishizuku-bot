@@ -125,6 +125,10 @@ from config import (
     remove_no_text_model,
     update_initial_model,
     update_models_buttons,
+    update_model_kind_buttons,
+    update_image_models_buttons,
+    get_image_models,
+    get_image_engine,
     update_language_status,
     update_first_buttons_message,
     get_all_available_models,
@@ -1582,7 +1586,7 @@ async def button_press(update, context):
     data = callback_query.data
     # callback 可从旧面板触发；全局模式下拒绝所有会持久化配置的动作。
     if not _global_config_change_permitted(update) and (
-        data.endswith(("_MODELS", "_LANGUAGES", "_PREFERENCES", "_PLUGINS"))
+        data.endswith(("_MODELS", "_IMAGEMODELS", "_LANGUAGES", "_PREFERENCES", "_PLUGINS"))
     ):
         await callback_query.answer(text="全局模式下只有管理员可以修改此配置。", show_alert=True)
         return
@@ -1591,7 +1595,37 @@ async def button_press(update, context):
     banner = strings['message_banner'][get_current_lang(convo_id)]
     import telegram
     try:
-        if data.endswith("_MODELS"):
+        if data.endswith("_IMAGEMODELS"):
+            selected = data[:-12]
+            Users.set_config(convo_id, "image_engine", selected)
+            try:
+                info_message = update_info_message(convo_id)
+                message = await callback_query.edit_message_text(
+                    text=escape(info_message + strings["button_image_models"][get_current_lang(convo_id)]),
+                    reply_markup=InlineKeyboardMarkup(update_image_models_buttons(convo_id)),
+                    parse_mode='MarkdownV2'
+                )
+            except Exception as e:
+                logger.info(e)
+        elif data.startswith("IMAGE_MODELS"):
+            if GET_MODELS:
+                try:
+                    await get_image_models()
+                except Exception as exc:
+                    logger.warning("Image model discovery failed: %s", exc)
+            info_message = update_info_message(convo_id)
+            message = await callback_query.edit_message_text(
+                text=escape(info_message + strings["button_image_models"][get_current_lang(convo_id)]),
+                reply_markup=InlineKeyboardMarkup(update_image_models_buttons(convo_id)),
+                parse_mode='MarkdownV2'
+            )
+        elif data.startswith("CHAT_MODELS"):
+            message = await callback_query.edit_message_text(
+                text=escape(info_message + banner),
+                reply_markup=InlineKeyboardMarkup(update_models_buttons(convo_id)),
+                parse_mode='MarkdownV2'
+            )
+        elif data.endswith("_MODELS"):
             data = data[:-7]
             Users.set_config(convo_id, "engine", data)
             try:
@@ -1618,8 +1652,8 @@ async def button_press(update, context):
                 pass
         elif data.startswith("MODELS"):
             message = await callback_query.edit_message_text(
-                text=escape(info_message + banner),
-                reply_markup=InlineKeyboardMarkup(update_models_buttons(convo_id)),
+                text=escape(info_message + strings["model_panel_banner"][get_current_lang(convo_id)]),
+                reply_markup=InlineKeyboardMarkup(update_model_kind_buttons(convo_id)),
                 parse_mode='MarkdownV2'
             )
 

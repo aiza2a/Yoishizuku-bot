@@ -22,21 +22,30 @@ _ALLOWED_SIZES = {"256x256", "512x512", "1024x1024", "1024x1792", "1792x1024"}
 
 def _timeout() -> int:
     try:
-        return max(10, min(300, int(os.environ.get("IMAGE_TIMEOUT", 120))))
+        return max(10, min(600, int(os.environ.get("IMAGE_TIMEOUT", 180))))
     except (TypeError, ValueError):
-        return 120
+        return 180
 
 
 def _endpoint() -> str:
+    """Resolve the image endpoint from either a full URL or a gateway base.
+
+    Accepts values such as ``https://host/v1``, ``https://host/v1/responses``
+    and ``https://host/v1/chat/completions``; all of them resolve to the
+    gateway's ``/images/generations`` path so a mistyped suffix does not
+    produce ``/v1/responses/images/generations``.
+    """
     explicit = os.environ.get("IMAGE_BASE_URL", "").strip()
-    if explicit:
-        return explicit if "/images/" in explicit else explicit.rstrip("/") + "/images/generations"
-    base = (os.environ.get("BASE_URL", "") or "").strip()
+    base = explicit or (os.environ.get("BASE_URL", "") or "").strip()
     if not base:
         return "https://api.openai.com/v1/images/generations"
-    for suffix in ("/chat/completions", "/responses"):
+    base = base.rstrip("/")
+    if base.endswith("/images/generations"):
+        return base
+    for suffix in ("/chat/completions", "/responses", "/completions", "/images"):
         if base.endswith(suffix):
-            return base[: -len(suffix)] + "/images/generations"
+            base = base[: -len(suffix)]
+            break
     return base.rstrip("/") + "/images/generations"
 
 
@@ -46,6 +55,19 @@ def _credentials() -> str:
         if value:
             return value
     return ""
+
+
+def _model_name() -> str:
+    """Prefer the model chosen in the Telegram panel, then the env default."""
+    try:
+        import config
+
+        selected = str(config.get_image_engine(None) or "").strip()
+        if selected:
+            return selected
+    except Exception:
+        pass
+    return os.environ.get("IMAGE_MODEL_NAME", "").strip() or "dall-e-3"
 
 
 def _extract(payload: dict[str, Any]) -> str:
@@ -88,7 +110,7 @@ def generate_image(text: str, size: str = "1024x1024") -> str:
         dimensions = "1024x1024"
 
     payload = {
-        "model": os.environ.get("IMAGE_MODEL_NAME", "").strip() or "dall-e-3",
+        "model": _model_name(),
         "prompt": prompt,
         "n": 1,
         "size": dimensions,
