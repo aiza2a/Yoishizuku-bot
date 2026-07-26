@@ -509,7 +509,12 @@ async def get_image_models():
         image_initial_model = []
         return image_initial_model
     try:
-        response = requests.get(
+        # Keep the blocking HTTP call off the event loop so the panel stays
+        # responsive while the image gateway is slow.
+        import asyncio
+
+        response = await asyncio.to_thread(
+            requests.get,
             base + '/models',
             headers={'Authorization': 'Bearer ' + key},
             timeout=15,

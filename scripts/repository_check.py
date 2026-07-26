@@ -27,6 +27,8 @@ checks = {
     "image_plugin_is_built": "aient_image.py          /home/aient/aient/plugins/image.py" in dockerfile,
     "image_search_plugin_is_built": "aient_image_search.py   /home/aient/aient/plugins/image_search.py" in dockerfile,
     "persona_covers_scoped_search": "### 检索范围的选择" in (ROOT / "persona" / "modules" / "13_task_execution.md").read_text(encoding="utf-8"),
+    "sync_plugins_run_off_event_loop": "asyncio.to_thread(function_to_call" in (ROOT / "app" / "overrides" / "aient_plugins_config.py").read_text(encoding="utf-8"),
+    "persona_forbids_premature_failure": "绝对不能先说它失败" in (ROOT / "persona" / "modules" / "13_task_execution.md").read_text(encoding="utf-8"),
     "persona_covers_retry": "### 重新回答" in (ROOT / "persona" / "modules" / "13_task_execution.md").read_text(encoding="utf-8"),
     "model_panel_has_two_levels": "def update_model_kind_buttons" in config and "def update_image_models_buttons" in config,
     "info_shows_image_model": '"• " + t["image_model"]' in config,

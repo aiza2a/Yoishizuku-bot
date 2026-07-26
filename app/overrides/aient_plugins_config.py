@@ -70,7 +70,12 @@ async def get_tools_result_async(function_call_name, function_full_response, eng
         elif inspect.iscoroutinefunction(function_to_call):
             function_response = await function_to_call(**call_args)
         else:
-            function_response = function_to_call(**call_args)
+            # Synchronous plugins use blocking HTTP calls. Running them inline
+            # would freeze the event loop for the whole request, stalling status
+            # animations and every other chat. Offload them to a worker thread.
+            import asyncio
+
+            function_response = await asyncio.to_thread(function_to_call, **call_args)
 
     function_response = (
         f"function_response:{function_response}"
