@@ -30,6 +30,7 @@ docker compose config --quiet
 python3 scripts/regression_check.py
 python3 scripts/role_dialogue_check.py
 python3 scripts/tool_policy_check.py
+python3 scripts/unbound_local_check.py
 python3 scripts/repository_check.py
 
 docker compose run --rm --no-deps \

@@ -3,6 +3,7 @@ import sys
 sys.dont_write_bytecode = True
 import base64
 import logging
+import time
 import traceback
 import utils.decorators as decorators
 
@@ -442,49 +443,59 @@ def thinking_text(lang_code, frame=0):
 _WAITING_VARIANTS = {
     "zh": (
         "宵雫思索中", "还在想，稍等一下", "我把话理一理", "让我再想清楚一点",
-        "快好了，别急", "还有一点点就好",
+        "先别急，我在整理", "这句怎么说更准一点", "快好了，别急", "还有一点点就好",
     ),
     "zh-hk": (
         "宵雫思索中", "還在想，稍等一下", "我把話理一理", "讓我再想清楚一點",
-        "快好了，別急", "還有一點點就好",
+        "先別急，我在整理", "這句怎麼說更準一點", "快好了，別急", "還有一點點就好",
     ),
     "ja": (
         "宵雫が考えています", "もう少しだけ待ってください", "言葉を整えています",
-        "もうすぐまとまります",
+        "うまく言えるか考えています", "もうすぐまとまります", "あと少しです",
     ),
     "en": (
         "Shizuku is thinking", "Still thinking, one moment", "Putting my words together",
-        "Almost ready",
+        "Looking for the right phrasing", "Almost ready", "Just a little longer",
     ),
 }
 
 _IMAGE_WAITING_VARIANTS = {
     "zh": (
-        "我先想想画面该怎么摆", "在调整光线和颜色", "细节还在补，稍等一下",
-        "快画好了，再等我一会儿", "最后收一下尾",
+        "我先想想画面该怎么摆", "构图定下来了", "在调整光线和颜色",
+        "颜色再压一点会更好", "细节还在补，稍等一下", "头发和衣褶再描一遍",
+        "背景我再修一修", "快画好了，再等我一会儿", "最后收一下尾",
+        "checking 一下有没有画歪", "再等等，马上就好",
     ),
     "zh-hk": (
-        "我先想想畫面該怎麼擺", "在調整光線和顏色", "細節還在補，稍等一下",
-        "快畫好了，再等我一會兒", "最後收一下尾",
+        "我先想想畫面該怎麼擺", "構圖定下來了", "在調整光線和顏色",
+        "顏色再壓一點會更好", "細節還在補，稍等一下", "頭髮和衣褶再描一遍",
+        "背景我再修一修", "快畫好了，再等我一會兒", "最後收一下尾",
+        "看看有沒有畫歪", "再等等，馬上就好",
     ),
     "ja": (
-        "構図を考えています", "光と色を整えています", "細部を描き込んでいます",
-        "もうすぐ仕上がります",
+        "構図を考えています", "構図が決まりました", "光と色を整えています",
+        "色味をもう少し落ち着かせます", "細部を描き込んでいます", "髪と衣の線を整えています",
+        "背景を直しています", "もうすぐ仕上がります", "最後の調整をしています",
     ),
     "en": (
-        "Sketching the composition", "Adjusting light and colour", "Filling in the details",
-        "Almost finished",
+        "Sketching the composition", "Composition is set", "Adjusting light and colour",
+        "Toning the palette down a little", "Filling in the details", "Refining hair and folds",
+        "Cleaning up the background", "Almost finished", "Final touches",
     ),
 }
 
 
 def waiting_text(lang_code, frame=0, variants=None):
-    """Rotate short in-character waiting lines so long work never looks frozen."""
+    """Rotate short in-character waiting lines so long work never looks frozen.
+
+    Each frame shows a different line: the animation loop runs about once per
+    1.6s, so rotating per frame keeps the message visibly alive without
+    exceeding Telegram's edit rate limit.
+    """
     ui = _ui_lang_name(lang_code)
     table = variants or _WAITING_VARIANTS
     pool = table.get(ui) or table.get("en")
-    # Change wording every ~2.4s while the spinner keeps moving each frame.
-    base = pool[(int(frame) // 15) % len(pool)]
+    base = pool[int(frame) % len(pool)]
     return f"`{base} {status_spinner(frame)}`"
 
 
@@ -529,8 +540,8 @@ def search_running_text(stage_key, lang_code, frame=0):
     ui = _ui_lang_name(lang_code)
     variants = _SEARCH_STATUS_VARIANTS.get(stage_key, {}).get(ui)
     if variants:
-        # Change wording every 1.28 seconds; spinner still advances every frame.
-        stage = variants[(int(frame) // 8) % len(variants)]
+        # One line per frame; the loop already runs at a Telegram-safe pace.
+        stage = variants[int(frame) % len(variants)]
     else:
         stage = strings.get(stage_key, {}).get(lang_code, stage_key)
     order = _SEARCH_STAGE_ORDER.get(stage_key)
@@ -601,8 +612,14 @@ def _rich_markdown(text):
     return str(text or "")
 
 
-async def animate_status(context, chatid, message_id, convo_id, stop_event, text_provider, interval=0.16):
-    """Edit one message repeatedly to show live status animation."""
+async def animate_status(context, chatid, message_id, convo_id, stop_event, text_provider, interval=1.6):
+    """Edit one message repeatedly to show live status animation.
+
+    Telegram throttles edits on a single message to roughly one per second.
+    Editing faster than that gets silently rejected, which used to freeze the
+    placeholder on its first frame. Keep a conservative interval and back off
+    whenever the API asks us to, so the text keeps visibly changing.
+    """
     import asyncio as _asyncio
     frame = 0
     last_text = None
@@ -627,6 +644,13 @@ async def animate_status(context, chatid, message_id, convo_id, stop_event, text
                         disable_web_page_preview=True,
                     )
                 last_text = content
+        except RetryAfter as exc:
+            # Wait out the throttle instead of burning frames against it.
+            try:
+                await _asyncio.sleep(float(exc.retry_after) + 0.5)
+            except Exception:
+                break
+            continue
         except Exception:
             # Ignore edit conflicts / message-not-modified / race with final answer
             pass
@@ -646,7 +670,7 @@ async def animate_thinking(context, chatid, message_id, convo_id, stop_event, me
         convo_id,
         stop_event,
         text_provider=lambda frame: waiting_text(lang, frame),
-        interval=0.16,
+        interval=1.6,
     )
 
 async def refresh_persistent_summary(convo_id, model_name, api_url, api_key):
@@ -720,6 +744,8 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
     tmpresult = ""
     modifytime = 0
     time_out = 600
+    # Monotonic deadline for Telegram edit throttling; 0 means "no backoff".
+    stream_retry_until = 0.0
     image_has_send = 0
     model_name = engine
     language = Users.get_config(config_convo_id, "language")
@@ -866,7 +892,7 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     convo_id,
                     think_stop_event,
                     text_provider=text_provider,
-                    interval=0.16,
+                    interval=1.6,
                 )
             )
 

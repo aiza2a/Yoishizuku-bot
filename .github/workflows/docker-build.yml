@@ -65,6 +65,7 @@ jobs:
           python3 scripts/repository_check.py
           python3 scripts/role_dialogue_check.py
           python3 scripts/tool_policy_check.py
+          python3 scripts/unbound_local_check.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
