@@ -72,10 +72,23 @@ async def get_tools_result_async(function_call_name, function_full_response, eng
         else:
             # Synchronous plugins use blocking HTTP calls. Running them inline
             # would freeze the event loop for the whole request, stalling status
-            # animations and every other chat. Offload them to a worker thread.
+            # animations and every other chat. Offload them to a worker thread
+            # and cap the total wait so a hung upstream cannot pin the turn.
             import asyncio
 
-            function_response = await asyncio.to_thread(function_to_call, **call_args)
+            try:
+                budget = max(30, min(900, int(os.environ.get("TOOL_EXECUTION_TIMEOUT", 360))))
+            except (TypeError, ValueError):
+                budget = 360
+            try:
+                function_response = await asyncio.wait_for(
+                    asyncio.to_thread(function_to_call, **call_args), timeout=budget
+                )
+            except asyncio.TimeoutError:
+                function_response = (
+                    f"<tool_error>{function_call_name} 超过 {budget} 秒没有返回结果，本次没有拿到数据。"
+                    "请如实说明这次没有完成，不要编造结果。</tool_error>"
+                )
 
     function_response = (
         f"function_response:{function_response}"

@@ -10,12 +10,16 @@ anywhere, falls back to the chat credentials, and supports both ``url`` and
 from __future__ import annotations
 
 import base64
+import logging
 import os
+import time
 from typing import Any
 
 import requests
 
 from .registry import register_tool
+
+_LOGGER = logging.getLogger("yoishizuku.image")
 
 _ALLOWED_SIZES = {"256x256", "512x512", "1024x1024", "1024x1792", "1792x1024"}
 
@@ -116,13 +120,18 @@ def generate_image(text: str, size: str = "1024x1024") -> str:
         "size": dimensions,
     }
     try:
+        started = time.monotonic()
         response = requests.post(
             _endpoint(),
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json=payload,
             timeout=_timeout(),
         )
+        _LOGGER.warning(
+            "image request finished in %.1fs status=%s", time.monotonic() - started, response.status_code
+        )
     except Exception as exc:
+        _LOGGER.warning("image request failed: %s", type(exc).__name__)
         return f"<tool_error>图像服务连接失败：{type(exc).__name__}</tool_error>"
 
     if response.status_code != 200:

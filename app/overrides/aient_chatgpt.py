@@ -776,6 +776,17 @@ class chatgpt(BaseLLM):
                     elif tool_response.startswith("data:image/") and ";base64," in tool_response:
                         tool_info["base64_image"] = tool_response
                         final_tool_response = "Read image successfully!"
+                    elif tool_name == "generate_image":
+                        # Bind the answer to the produced image so the model
+                        # cannot claim it failed or describe a different picture.
+                        # The raw URL is preserved separately for the sender.
+                        tool_info["generated_image"] = tool_response
+                        final_tool_response = (
+                            "图像已生成成功，并且已经直接发送给用户了。\n"
+                            f"图像地址：{tool_response}\n"
+                            "请据此简短自然地回应，例如把图交给对方看。"
+                            "不要说生成失败、超时或没有响应；也不要重复贴出这个地址。"
+                        )
                 all_responses.append(ToolResult(tool_name, tool_args, final_tool_response))
 
             # 合并所有工具响应
@@ -794,6 +805,14 @@ class chatgpt(BaseLLM):
             # persona-aware hand-off while the follow-up answer is generated.
             if successful_tool_names:
                 yield f"message_tool_complete:{successful_tool_names[0]}"
+
+            # Hand the produced image to the presentation layer directly instead
+            # of relying on it to parse conversation history.
+            for tool_info in tool_calls:
+                produced = tool_info.get("generated_image")
+                if produced:
+                    yield f"message_generated_image:{produced}"
+                    break
 
             # 递归处理函数调用响应
             if is_async:

@@ -955,6 +955,20 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
             is_search_stage = isinstance(data, str) and data.startswith("message_search_stage_")
             is_tool_running = isinstance(data, str) and data.startswith("message_tool_running:")
             is_tool_complete = isinstance(data, str) and data.startswith("message_tool_complete:")
+            if isinstance(data, str) and data.startswith("message_generated_image:"):
+                produced = data.partition(":")[2]
+                if produced and not image_has_send:
+                    try:
+                        if produced.startswith("data:image/") and ";base64," in produced:
+                            payload = base64.b64decode(produced.split(";base64,", 1)[1])
+                            await context.bot.send_photo(chat_id=chatid, photo=payload, reply_to_message_id=messageid)
+                        else:
+                            await context.bot.send_photo(chat_id=chatid, photo=produced, reply_to_message_id=messageid)
+                        image_has_send = 1
+                        logger.warning("生成图片已发送")
+                    except Exception as exc:
+                        logger.warning("生成图片发送失败：%s", exc)
+                continue
             if isinstance(data, str) and data == "message_tool_discard_preamble":
                 # The model narrated a guess before the tool ran. Drop it so the
                 # user only ever sees the answer built from the real result.
@@ -2081,6 +2095,7 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 chunk.startswith("message_search_stage_")
                 or chunk.startswith("message_tool_running:")
                 or chunk.startswith("message_tool_complete:")
+                or chunk.startswith("message_generated_image:")
             ):
                 continue
             if chunk == "message_tool_discard_preamble":
