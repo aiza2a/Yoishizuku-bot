@@ -601,6 +601,30 @@ def tool_completion_running_text(tool_name, lang_code, frame=0):
     return running_text(f"〔已核对〕 {stage}", frame)
 
 
+def _fetch_image_bytes(url, timeout=120):
+    """Download a generated image so the bot can upload the bytes directly.
+
+    Telegram's own fetcher frequently reports "Failed to get http url content"
+    for slow image gateways. Fetching here removes that dependency.
+    """
+    try:
+        import requests
+
+        response = requests.get(url, timeout=timeout)
+        if response.status_code != 200:
+            logger.warning("图片下载返回 %s", response.status_code)
+            return b""
+        content = response.content
+        # Telegram rejects photos larger than 10 MB.
+        if not content or len(content) > 10 * 1024 * 1024:
+            logger.warning("图片大小不适合作为照片发送：%d 字节", len(content))
+            return b""
+        return content
+    except Exception as exc:
+        logger.warning("图片下载失败：%s", type(exc).__name__)
+        return b""
+
+
 def _rich_markdown(text):
     """Return plain Markdown for Rich Message payloads.
 
@@ -961,11 +985,32 @@ async def getChatGPT(update_message, context, title, robot, message, chatid, mes
                     try:
                         if produced.startswith("data:image/") and ";base64," in produced:
                             payload = base64.b64decode(produced.split(";base64,", 1)[1])
-                            await context.bot.send_photo(chat_id=chatid, photo=payload, reply_to_message_id=messageid)
                         else:
-                            await context.bot.send_photo(chat_id=chatid, photo=produced, reply_to_message_id=messageid)
-                        image_has_send = 1
-                        logger.warning("生成图片已发送")
+                            # Download here instead of handing the URL to
+                            # Telegram: its fetcher often fails on slow or
+                            # rate-limited image gateways ("Failed to get http
+                            # url content"). Uploading the bytes is reliable.
+                            payload = await asyncio.to_thread(_fetch_image_bytes, produced)
+                        if payload:
+                            await context.bot.send_photo(
+                                chat_id=chatid,
+                                photo=payload,
+                                reply_to_message_id=messageid,
+                                read_timeout=180,
+                                write_timeout=180,
+                                connect_timeout=60,
+                            )
+                            image_has_send = 1
+                            logger.warning("生成图片已发送 %d 字节", len(payload))
+                        else:
+                            logger.warning("生成图片下载失败，回退为链接：%s", produced[:120])
+                            await context.bot.send_message(
+                                chat_id=chatid,
+                                message_thread_id=message_thread_id,
+                                text=produced,
+                                reply_to_message_id=messageid,
+                            )
+                            image_has_send = 1
                     except Exception as exc:
                         logger.warning("生成图片发送失败：%s", exc)
                 continue
@@ -2057,8 +2102,9 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     result = ""
+    generated_image = ""
 
-    async def _edit_guest(text, *, plain=False):
+    async def _edit_guest(text, *, plain=False, preview=False):
         """Guest queries permit sparse inline edits; use one final update."""
         while True:
             try:
@@ -2066,7 +2112,7 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     text=text,
                     inline_message_id=inline_message_id,
                     parse_mode=None if plain else "MarkdownV2",
-                    disable_web_page_preview=True,
+                    disable_web_page_preview=not preview,
                 )
                 return True
             except RetryAfter as exc:
@@ -2091,11 +2137,16 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             system_prompt=system_prompt,
             plugins=plugins,
         ):
+            if isinstance(chunk, str) and chunk.startswith("message_generated_image:"):
+                # Guest replies are inline messages: the bot is not a chat
+                # member and cannot call send_photo. Keep the URL and let
+                # Telegram render its link preview instead.
+                generated_image = chunk.partition(":")[2]
+                continue
             if isinstance(chunk, str) and (
                 chunk.startswith("message_search_stage_")
                 or chunk.startswith("message_tool_running:")
                 or chunk.startswith("message_tool_complete:")
-                or chunk.startswith("message_generated_image:")
             ):
                 continue
             if chunk == "message_tool_discard_preamble":
@@ -2105,8 +2156,14 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Guest inline messages are heavily rate-limited by Telegram. Keeping
         # the initial status until generation ends avoids a half-sentence
         # followed by a long RetryAfter pause.
-        final = escape(result or "……这次没有收到可以回答的内容。", italic=False)
-        await _edit_guest(final)
+        body = result or "……这次没有收到可以回答的内容。"
+        show_preview = False
+        if generated_image and not generated_image.startswith("data:"):
+            # Append the URL so Telegram shows a preview of the produced image.
+            body = body.rstrip() + "\n\n" + generated_image
+            show_preview = True
+        final = escape(body, italic=False)
+        await _edit_guest(final, preview=show_preview)
     except Exception as exc:
         logger.exception("Guest 推理失败：%s", exc)
         await _edit_guest("……刚才的回答出了问题，请再试一次。", plain=True)

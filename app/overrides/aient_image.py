@@ -119,20 +119,35 @@ def generate_image(text: str, size: str = "1024x1024") -> str:
         "n": 1,
         "size": dimensions,
     }
-    try:
-        started = time.monotonic()
-        response = requests.post(
-            _endpoint(),
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=_timeout(),
-        )
-        _LOGGER.warning(
-            "image request finished in %.1fs status=%s", time.monotonic() - started, response.status_code
-        )
-    except Exception as exc:
-        _LOGGER.warning("image request failed: %s", type(exc).__name__)
-        return f"<tool_error>图像服务连接失败：{type(exc).__name__}</tool_error>"
+    # Upstream gateways intermittently return 500/502 under load. One retry
+    # turns most of those into a successful generation.
+    attempts = 2
+    response = None
+    for attempt in range(1, attempts + 1):
+        try:
+            started = time.monotonic()
+            response = requests.post(
+                _endpoint(),
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=_timeout(),
+            )
+            _LOGGER.warning(
+                "image request finished in %.1fs status=%s attempt=%d",
+                time.monotonic() - started, response.status_code, attempt,
+            )
+        except Exception as exc:
+            _LOGGER.warning("image request failed: %s attempt=%d", type(exc).__name__, attempt)
+            if attempt >= attempts:
+                return f"<tool_error>图像服务连接失败：{type(exc).__name__}</tool_error>"
+            continue
+        if response.status_code == 200 or response.status_code < 500:
+            break
+        if attempt < attempts:
+            _LOGGER.warning("image gateway returned %s, retrying", response.status_code)
+
+    if response is None:
+        return "<tool_error>图像服务没有返回响应。</tool_error>"
 
     if response.status_code != 200:
         return f"<tool_error>图像服务返回 {response.status_code}，请检查 IMAGE_BASE_URL 与 IMAGE_MODEL_NAME。</tool_error>"
