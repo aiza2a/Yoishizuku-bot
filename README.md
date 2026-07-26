@@ -124,6 +124,7 @@ Inline 与 Guest 无关。只有需要在输入框内看到候选卡片时，才
 | `SYSTEMPROMPT` | 见人设文件 | 全局系统提示词；人设文件优先用于本地化角色设定 |
 | `PERSONA_FILE` | `persona.env` | 人设入口配置文件 |
 | `RICH_MESSAGE` | 未设置 | 设为 `1` 启用 Bot API 10.0 Rich Message |
+| `VERBOSE_ENGINE_LOG` | `False` | 设为 `True` 记录完整请求体；日志会包含 API 密钥，仅用于排查 |
 | `TOOL_ALLOWLIST` | 空 | 仅暴露指定工具；逗号分隔，支持 `*` 通配符 |
 | `TOOL_DENYLIST` | 空 | 从工具集合中排除指定工具；优先于允许列表 |
 | `TOOL_CALL_MODELS` | 空 | 仅对指定模型发送 OpenAI `tools` 字段；逗号分隔，支持 `*` |
@@ -156,7 +157,7 @@ get_url_content=True
 
 若网关只在非流式请求中正确返回工具调用，可为该模型设置 `TOOL_NONSTREAM_MODELS`。仅当当前会话启用了至少一个工具时才会关闭该次 HTTP 请求的流式传输。
 
-`download_read_arxiv_pdf`（论文）和 `run_python_script`（代码执行）已从 Telegram 菜单、用户配置和发送给模型的工具 schema 中移除。`TOOL_ALLOWLIST` 还能进一步缩减其他工具；这些规则不会删除上游基础镜像内的 Python 文件，但会阻止它们被调用。其余工具的开关仍由同名环境变量或 `/info` 菜单控制。
+`download_read_arxiv_pdf`（论文）、`run_python_script`（代码执行）、`excute_command`（容器命令）、`list_directory` 与 `set_readonly_path`（容器文件系统）已从 Telegram 菜单、用户配置和发送给模型的工具 schema 中移除，且无法通过 `TOOL_ALLOWLIST` 恢复。`TOOL_ALLOWLIST` 还能进一步缩减其他工具；这些规则不会删除上游基础镜像内的 Python 文件，但会阻止它们被调用。其余工具的开关仍由同名环境变量或 `/info` 菜单控制。
 
 ### 限定聚合搜索
 

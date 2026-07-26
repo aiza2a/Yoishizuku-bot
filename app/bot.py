@@ -1821,7 +1821,7 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not api_key:
         api_key = getattr(config, "API_KEY", None)
     if not api_url:
-        api_url = getattr(config, "API_URL", None)
+        api_url = getattr(config, "BASE_URL", None)
 
     logger.warning("Guest 收到召唤：caller=%s chat=%s query=%s text=%r", caller_id, chatid, guest_query_id[:12], text[:80])
 

@@ -43,6 +43,16 @@ def _env_int(name: str, default: int, lower: int, upper: int) -> int:
         return default
 
 
+def _result_limit(requested: int) -> int:
+    """Clamp the model-provided result count to the deployment ceiling."""
+    ceiling = _env_int("SEARCH_MAX_RESULTS", 5, 1, 8)
+    try:
+        wanted = int(requested)
+    except (TypeError, ValueError):
+        wanted = ceiling
+    return max(1, min(ceiling, wanted))
+
+
 def _providers() -> list[str]:
     configured = [
         value.strip().casefold()
@@ -159,7 +169,6 @@ def _search_tavily(query: str, limit: int, domains: list[str], freshness: str) -
     if not key:
         return []
     payload: dict[str, Any] = {
-        "api_key": key,
         "query": query,
         "search_depth": "advanced",
         "max_results": limit,
@@ -174,6 +183,7 @@ def _search_tavily(query: str, limit: int, domains: list[str], freshness: str) -
     try:
         response = requests.post(
             "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json=payload,
             timeout=_env_int("SEARCH_PROVIDER_TIMEOUT", 8, 3, 30),
         )
@@ -333,7 +343,7 @@ async def search_scoped(
     freshness = str(freshness or "any").strip().casefold()
     if freshness not in {"any", "day", "week", "month"}:
         freshness = "any"
-    limit = _env_int("SEARCH_MAX_RESULTS", max_results, 1, 8)
+    limit = _result_limit(max_results)
     domains = _domains(scope, sites, query)
 
     yield "message_search_stage_1"

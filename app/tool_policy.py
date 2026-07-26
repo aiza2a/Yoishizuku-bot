@@ -10,9 +10,14 @@ from collections.abc import Mapping
 # These features are intentionally removed from this bot's public tool set.
 # The upstream base image may still contain their implementation, so filtering
 # at registration/request time is required to prevent invocation.
+# excute_command / list_directory / set_readonly_path expose the container
+# filesystem and shell, which this companion bot must never offer to a model.
 REMOVED_TOOLS = frozenset({
     "download_read_arxiv_pdf",
     "run_python_script",
+    "excute_command",
+    "list_directory",
+    "set_readonly_path",
 })
 
 

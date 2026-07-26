@@ -370,14 +370,18 @@ Users = UserConfig(mode=CHAT_MODE, api_key=API_KEY, api_url=BASE_URL, engine=MOD
 
 temperature = float(os.environ.get('temperature', '0.5'))
 
+# Verbose engine logs include the full request body, which contains the API key
+# and complete conversation history. Keep it opt-in for debugging only.
+VERBOSE_ENGINE_LOG = (os.environ.get('VERBOSE_ENGINE_LOG', 'False') == 'True')
+
 ChatGPTbot, SummaryBot, whisperBot = None, None, None
 def InitEngine(chat_id=None):
     global Users, ChatGPTbot, SummaryBot, whisperBot
     api_key = Users.get_config(chat_id, "api_key")
     api_url = Users.get_config(chat_id, "api_url")
     if api_key:
-        ChatGPTbot = chatgpt(temperature=temperature, print_log=True, api_url=api_url, api_key=api_key, retry_count=3)
-        SummaryBot = chatgpt(temperature=temperature, use_plugins=False, print_log=True, api_url=api_url, api_key=api_key, retry_count=3)
+        ChatGPTbot = chatgpt(temperature=temperature, print_log=VERBOSE_ENGINE_LOG, api_url=api_url, api_key=api_key, retry_count=3)
+        SummaryBot = chatgpt(temperature=temperature, use_plugins=False, print_log=VERBOSE_ENGINE_LOG, api_url=api_url, api_key=api_key, retry_count=3)
         whisperBot = whisper(api_key=api_key, api_url=api_url)
 
 def update_language_status(language, chat_id=None):

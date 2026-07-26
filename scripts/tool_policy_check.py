@@ -52,7 +52,11 @@ def main() -> None:
     try:
         set_policy()
         check("removed_tools_are_fixed", REMOVED_TOOLS == {
-            "download_read_arxiv_pdf", "run_python_script"
+            "download_read_arxiv_pdf",
+            "run_python_script",
+            "excute_command",
+            "list_directory",
+            "set_readonly_path",
         })
         check("removed_tools_are_hidden", filter_plugins(plugins) == {
             "get_search_results": True, "get_url_content": False
@@ -62,6 +66,10 @@ def main() -> None:
         check("allowlist_cannot_restore_removed_tool", filter_plugins(plugins) == {
             "get_search_results": True
         })
+        set_policy(TOOL_ALLOWLIST="excute_command,list_directory,set_readonly_path")
+        check("allowlist_cannot_restore_shell_tools", filter_plugins({
+            "excute_command": True, "list_directory": True, "set_readonly_path": True
+        }) == {})
 
         set_policy(
             TOOL_CALL_MODELS="gpt-4o,claude-*",

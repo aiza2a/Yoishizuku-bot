@@ -23,6 +23,8 @@ checks = {
     "scoped_search_plugin_is_built": "aient_scoped_search.py  /home/aient/aient/plugins/scoped_search.py" in dockerfile,
     "scoped_search_config_is_built": "aient_plugins_config.py /home/aient/aient/plugins/config.py" in dockerfile,
     "scoped_search_menu_label": "strings[\"search_scoped\"]" in (ROOT / "app" / "overrides" / "i18n_override.py").read_text(encoding="utf-8"),
+    "engine_logs_are_opt_in": "print_log=VERBOSE_ENGINE_LOG" in config and "print_log=True" not in config,
+    "guest_falls_back_to_base_url": 'getattr(config, "BASE_URL", None)' in bot,
     "guest_uses_caller_config": "guest_config_id = caller_id" in bot and "Users.extract_plugins_config(guest_config_id)" in bot,
     "guest_reply_context_is_forwarded": "reply_context = raw_guest.get(\"reply_to_message\")" in bot,
     "guest_avoids_high_frequency_stream_edits": "Guest inline messages are heavily rate-limited" in bot,
