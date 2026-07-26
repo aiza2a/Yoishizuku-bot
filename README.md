@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/logo-3071751.jpg" width="160" alt="藍沢宵雫">
+  <img src="./assets/yoishizuku.jpg" width="160" alt="藍沢宵雫">
 </p>
 
 # 藍沢宵雫 · Yoishizuku-bot
