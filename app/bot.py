@@ -2258,18 +2258,17 @@ async def guest_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         guest_status_task.cancel()
         body = result or "……这次没有收到可以回答的内容。"
         if generated_image and not generated_image.startswith("data:"):
-            # Deliver the picture through Telegram's large link preview and hide
-            # the raw URL behind a zero-width character, so the chat shows an
-            # image block instead of a blue link.
-            hidden_link = "[\u200b](" + generated_image + ")"
-            markdown_body = escape(body.rstrip(), italic=False) + hidden_link
-            if await _edit_guest(markdown_body, preview=True, preview_url=generated_image):
-                return
-            # Fall back to a plain message with a visible link if the markdown
-            # payload was rejected.
+            # Guest replies are inline messages, so send_photo is unavailable.
+            # LinkPreviewOptions.url renders the picture as a large preview even
+            # when the URL never appears in the message body, which keeps the
+            # chat clean.
             if await _edit_guest(
-                body.rstrip() + "\n\n" + generated_image,
-                plain=True, preview=True, preview_url=generated_image,
+                escape(body.rstrip(), italic=False),
+                preview=True, preview_url=generated_image,
+            ):
+                return
+            if await _edit_guest(
+                body.rstrip(), plain=True, preview=True, preview_url=generated_image,
             ):
                 return
         final = escape(body, italic=False)
